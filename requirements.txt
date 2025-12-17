@@ -1,6 +1,15 @@
-streamlit==1.29.0
+# Backend API
+flask==3.0.0
+flask-cors==4.0.0
+
+# AI and Content Generation
 google-generativeai==0.3.0
 python-dotenv==1.0.0
 pydantic==2.5.3
+
+# Export and Utilities
 markdown==3.5.1
 requests==2.31.0
+
+# Optional: For Streamlit (legacy)
+# streamlit==1.29.0
