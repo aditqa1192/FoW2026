@@ -10,6 +10,7 @@ import json
 from datetime import datetime
 
 from agent import CourseContentAgent, generate_markdown_course, generate_html_course, format_course_summary
+from agent.course_agent_langchain import CourseContentAgentLangChain
 
 # Load environment variables
 load_dotenv()
@@ -187,8 +188,8 @@ if generate_button:
     else:
         try:
             with st.spinner("🤖 Generating course content... This may take a few minutes."):
-                # Initialize agent
-                agent = CourseContentAgent(api_key=api_key, model=model)
+                # Initialize LangChain agent
+                agent = CourseContentAgentLangChain(api_key=api_key, model=model)
                 
                 # Generate course
                 course = agent.generate_complete_course(
