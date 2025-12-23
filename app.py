@@ -1,5 +1,5 @@
 """
-OKIR Course Content Agent - Streamlit UI
+Lilaq Course Content Agent - Streamlit UI
 Interactive web interface for generating course content
 """
 
@@ -16,7 +16,7 @@ load_dotenv()
 
 # Page configuration
 st.set_page_config(
-    page_title="OKIR Course Content Agent",
+    page_title="Lilaq Course Content Agent",
     page_icon="📚",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -62,7 +62,7 @@ if 'generation_in_progress' not in st.session_state:
     st.session_state.generation_in_progress = False
 
 # Header
-st.markdown('<div class="main-header">📚 OKIR Course Content Agent</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header">📚 Lilaq Course Content Agent</div>', unsafe_allow_html=True)
 st.markdown('<div class="sub-header">AI-Powered Course Content Generation</div>', unsafe_allow_html=True)
 
 # Sidebar - Configuration
@@ -80,7 +80,7 @@ with st.sidebar:
     # Model selection
     model = st.selectbox(
         "AI Model",
-        ["gemini-2.0-flash-exp", "gemini-2.5-flash", "gemini-1.5-pro", "gemini-1.5-flash", "gemma-3-12b"],
+        ["gemini-2.5-flash","gemini-2.0-flash-exp", "gemini-1.5-pro", "gemini-1.5-flash", "gemma-3-12b"],
         index=0,
         help="Select the Gemini model to use for generation"
     )
@@ -334,6 +334,6 @@ if st.session_state.course_content:
 st.divider()
 st.markdown("""
 <div style="text-align: center; color: #7f8c8d; padding: 1rem;">
-    <p>OKIR Course Content Agent | Powered by Google Gemini</p>
+    <p>Lilaq Course Content Agent | Powered by Google Gemini</p>
 </div>
 """, unsafe_allow_html=True)
