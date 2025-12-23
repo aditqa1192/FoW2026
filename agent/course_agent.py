@@ -46,7 +46,7 @@ class CourseContentAgent:
     Agent that generates comprehensive course content using AI
     """
     
-    def __init__(self, api_key: Optional[str] = None, model: str = "gemini-2.0-flash-exp"):
+    def __init__(self, api_key: Optional[str] = None, model: str = "gemini-2.5-flash"):
         """
         Initialize the course content agent
         
@@ -55,7 +55,7 @@ class CourseContentAgent:
             model: Model to use for generation
         """
         self.api_key = api_key or os.getenv("GOOGLE_API_KEY")
-        self.model = model or os.getenv("GEMINI_MODEL", "gemini-2.0-flash-exp")
+        self.model = model or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
         
         if not self.api_key:
             raise ValueError("Google API key is required. Set GOOGLE_API_KEY environment variable.")

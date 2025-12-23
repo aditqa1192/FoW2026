@@ -1,4 +1,4 @@
-# OKIR Course Content Agent
+# Lilaq Course Content Agent
 
 An intelligent agent that automatically generates comprehensive course content based on user-specified topics.
 
@@ -32,14 +32,14 @@ streamlit run app.py
 1. Enter your Google API key in the sidebar
 2. Enter a course topic (e.g., "Python Programming for Beginners")
 3. Specify course parameters (duration, difficulty level, target audience)
-4. Select a Gemini model (gemini-2.0-flash-exp, gemini-1.5-pro, or gemini-1.5-flash)
+4. Select a Gemini model (gemini-2.5-flash,gemini-2.0-flash-exp, gemini-1.5-pro, or gemini-1.5-flash)
 5. Click "Generate Course Content"
 6. Review and export the generated content
 
 ## Project Structure
 
 ```
-OKIR-Agent UI/
+Lilaq-Agent UI/
 ├── app.py                  # Main Streamlit application
 ├── agent/
 │   ├── course_agent.py     # Core course generation agent

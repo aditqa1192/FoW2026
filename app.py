@@ -71,7 +71,7 @@ with st.sidebar:
     
     # Read API key and model from environment variables
     api_key = os.getenv("GOOGLE_API_KEY", "")
-    model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash-exp")
+    model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
     
     # Display current configuration (read-only)
     st.info(f"""**Current Configuration:**
