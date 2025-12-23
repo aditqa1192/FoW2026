@@ -69,21 +69,21 @@ st.markdown('<div class="sub-header">AI-Powered Course Content Generation</div>'
 with st.sidebar:
     st.header("⚙️ Configuration")
     
-    # API Key input
-    api_key = st.text_input(
-        "Google API Key",
-        type="password",
-        value=os.getenv("GOOGLE_API_KEY", ""),
-        help="Enter your Google API key. You can get one at https://makersuite.google.com/app/apikey"
-    )
+    # Read API key and model from environment variables
+    api_key = os.getenv("GOOGLE_API_KEY", "")
+    model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash-exp")
     
-    # Model selection
-    model = st.selectbox(
-        "AI Model",
-        ["gemini-2.5-flash","gemini-2.0-flash-exp", "gemini-1.5-pro", "gemini-1.5-flash", "gemma-3-12b"],
-        index=0,
-        help="Select the Gemini model to use for generation"
-    )
+    # Display current configuration (read-only)
+    st.info(f"""**Current Configuration:**
+    
+🤖 **Model:** {model}
+🔑 **API Key:** {"✅ Configured" if api_key else "❌ Not Set"}
+
+*Configure via .env file*
+    """)
+    
+    if not api_key:
+        st.error("⚠️ API Key not configured. Please set GOOGLE_API_KEY in .env file.")
     
     st.divider()
     
