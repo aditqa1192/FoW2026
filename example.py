@@ -23,7 +23,7 @@ def main():
         print("Example: GOOGLE_API_KEY=your_key_here")
         return
     
-    print("🚀 OKIR Course Content Agent - Example Usage\n")
+    print("🚀 Lilaq Course Content Agent - Example Usage\n")
     
     # Initialize the agent
     print("Initializing agent...")
