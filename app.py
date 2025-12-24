@@ -8,6 +8,7 @@ import os
 from dotenv import load_dotenv
 import json
 from datetime import datetime
+import re
 
 from agent import CourseContentAgent, generate_markdown_course, generate_html_course, format_course_summary
 from agent.course_agent_langchain import CourseContentAgentLangChain
@@ -61,6 +62,104 @@ if 'course_content' not in st.session_state:
     st.session_state.course_content = None
 if 'generation_in_progress' not in st.session_state:
     st.session_state.generation_in_progress = False
+if 'validation_errors' not in st.session_state:
+    st.session_state.validation_errors = []
+
+def extract_course_parameters(prompt):
+    """
+    Extract course parameters from user prompt.
+    Returns a dictionary with extracted parameters and a list of missing required fields.
+    """
+    params = {
+        'topic': None,
+        'duration_weeks': None,
+        'difficulty': None,
+        'target_audience': None,
+        'lessons_per_module': None
+    }
+    
+    missing_fields = []
+    
+    # Extract topic (usually the first significant phrase or after keywords)
+    topic_patterns = [
+        r'course (?:on|about|for|in)\s+([^\n,.]+)',
+        r'(?:create|generate|build)\s+(?:a\s+)?course\s+(?:on|about|for|in)\s+([^\n,.]+)',
+        r'topic:\s*([^\n,.]+)',
+        r'^([^.\n]+?)(?:\s+course|\s+for|\s+duration|\s+difficulty|$)'
+    ]
+    
+    for pattern in topic_patterns:
+        match = re.search(pattern, prompt, re.IGNORECASE)
+        if match:
+            params['topic'] = match.group(1).strip()
+            break
+    
+    # Extract duration in weeks
+    duration_patterns = [
+        r'(\d+)\s*weeks?',
+        r'duration:\s*(\d+)\s*weeks?',
+        r'over\s+(\d+)\s*weeks?',
+        r'for\s+(\d+)\s*weeks?'
+    ]
+    
+    for pattern in duration_patterns:
+        match = re.search(pattern, prompt, re.IGNORECASE)
+        if match:
+            params['duration_weeks'] = int(match.group(1))
+            break
+    
+    # Extract difficulty level
+    difficulty_keywords = ['beginner', 'intermediate', 'advanced']
+    for level in difficulty_keywords:
+        if re.search(rf'\b{level}\b', prompt, re.IGNORECASE):
+            params['difficulty'] = level
+            break
+    
+    # Extract target audience
+    audience_patterns = [
+        r'for\s+([^,.\n]+?)\s+(?:students|learners|professionals|people)',
+        r'target audience:\s*([^\n,.]+)',
+        r'audience:\s*([^\n,.]+)',
+        r'aimed at\s+([^\n,.]+)'
+    ]
+    
+    for pattern in audience_patterns:
+        match = re.search(pattern, prompt, re.IGNORECASE)
+        if match:
+            params['target_audience'] = match.group(1).strip()
+            break
+    
+    # Extract lessons per module
+    lessons_patterns = [
+        r'(\d+)\s*lessons?\s+per\s+module',
+        r'lessons per module:\s*(\d+)',
+        r'(\d+)\s*lessons?\s+in\s+each\s+module'
+    ]
+    
+    for pattern in lessons_patterns:
+        match = re.search(pattern, prompt, re.IGNORECASE)
+        if match:
+            params['lessons_per_module'] = int(match.group(1))
+            break
+    
+    # Set defaults for optional parameters
+    if params['duration_weeks'] is None:
+        params['duration_weeks'] = 4
+        
+    if params['difficulty'] is None:
+        params['difficulty'] = 'beginner'
+        
+    if params['target_audience'] is None:
+        params['target_audience'] = 'general learners'
+        
+    if params['lessons_per_module'] is None:
+        params['lessons_per_module'] = 4
+    
+    # Check for required fields
+    if not params['topic']:
+        missing_fields.append('Course Topic')
+    
+    return params, missing_fields
 
 # Header
 st.markdown('<div class="main-header">📚 Lilaq Course Content Agent</div>', unsafe_allow_html=True)
@@ -104,51 +203,59 @@ with st.sidebar:
 col1, col2 = st.columns([2, 1])
 
 with col1:
-    st.header("🎯 Course Parameters")
+    st.header("🎯 Course Requirements")
     
-    # Course topic
-    course_topic = st.text_input(
-        "Course Topic",
-        placeholder="e.g., Python Programming for Beginners, Digital Marketing Fundamentals",
-        help="Enter the main topic or subject of the course"
+    # Prompt-based input
+    st.markdown("""
+    **Describe your course requirements in natural language:**
+    
+    You can include:
+    - Course topic (required)
+    - Duration in weeks (optional, default: 4 weeks)
+    - Difficulty level: beginner, intermediate, or advanced (optional, default: beginner)
+    - Target audience (optional, default: general learners)
+    - Lessons per module (optional, default: 4)
+    """)
+    
+    course_prompt = st.text_area(
+        "Course Description",
+        placeholder="""Example:
+Create a course on Python Programming for Beginners.
+Duration: 6 weeks
+Difficulty: beginner
+Target audience: college students
+4 lessons per module""",
+        help="Describe your course requirements in natural language",
+        height=200
     )
     
-    # Additional parameters
-    col_a, col_b = st.columns(2)
-    
-    with col_a:
-        duration_weeks = st.slider(
-            "Duration (weeks)",
-            min_value=1,
-            max_value=16,
-            value=4,
-            help="How many weeks should the course run?"
-        )
-        
-        difficulty = st.selectbox(
-            "Difficulty Level",
-            ["beginner", "intermediate", "advanced"],
-            index=0,
-            help="Target difficulty level for the course"
-        )
-    
-    with col_b:
-        target_audience = st.text_input(
-            "Target Audience",
-            value="general learners",
-            placeholder="e.g., college students, professionals, hobbyists",
-            help="Who is this course designed for?"
-        )
-        
-        lessons_per_module = st.slider(
-            "Lessons per Module",
-            min_value=2,
-            max_value=8,
-            value=4,
-            help="Number of lessons in each module"
-        )
+    # Validate button
+    if st.button("🔍 Validate Requirements", type="secondary"):
+        if course_prompt:
+            params, missing = extract_course_parameters(course_prompt)
+            st.session_state.validation_errors = missing
+            
+            if not missing:
+                st.success("✅ All required parameters detected!")
+                st.markdown(f"""
+                **Extracted Parameters:**
+                - **Topic:** {params['topic']}
+                - **Duration:** {params['duration_weeks']} weeks
+                - **Difficulty:** {params['difficulty']}
+                - **Target Audience:** {params['target_audience']}
+                - **Lessons per Module:** {params['lessons_per_module']}
+                """)
+            else:
+                st.error(f"❌ Missing required information: {', '.join(missing)}")
+                st.warning("Please update your description to include all required details.")
+        else:
+            st.warning("⚠️ Please enter course requirements first.")
     
     st.divider()
+    
+    # Display validation errors if any
+    if st.session_state.validation_errors:
+        st.error(f"⚠️ Missing required information: {', '.join(st.session_state.validation_errors)}")
     
     # Generate button
     generate_col, clear_col = st.columns([3, 1])
@@ -158,7 +265,7 @@ with col1:
             "🚀 Generate Course Content",
             type="primary",
             use_container_width=True,
-            disabled=not course_topic or not api_key
+            disabled=not course_prompt or not api_key
         )
     
     with clear_col:
@@ -170,10 +277,14 @@ with col2:
     st.header("💡 Quick Tips")
     st.info("""
     **For best results:**
-    - Be specific with course topics
-    - Adjust duration based on content depth
-    - Match difficulty to audience
-    - Review and customize generated content
+    - Clearly state the course topic
+    - Mention duration if you have a preference
+    - Specify difficulty level (beginner/intermediate/advanced)
+    - Describe your target audience
+    - Use natural language - be conversational!
+    
+    **Example:**
+    "Create a 6-week intermediate course on Machine Learning for software developers with 5 lessons per module"
     """)
     
     if st.session_state.course_content:
@@ -183,32 +294,41 @@ with col2:
 if generate_button:
     if not api_key:
         st.error("❌ Please provide a Google API key in the sidebar.")
-    elif not course_topic:
-        st.error("❌ Please enter a course topic.")
+    elif not course_prompt:
+        st.error("❌ Please enter course requirements.")
     else:
-        try:
-            with st.spinner("🤖 Generating course content... This may take a few minutes."):
-                # Initialize LangChain agent
-                agent = CourseContentAgentLangChain(api_key=api_key, model=model)
-                
-                # Generate course
-                course = agent.generate_complete_course(
-                    topic=course_topic,
-                    duration_weeks=duration_weeks,
-                    difficulty=difficulty,
-                    target_audience=target_audience,
-                    lessons_per_module=lessons_per_module
-                )
-                
-                # Store in session state
-                st.session_state.course_content = agent.export_to_dict(course)
-                
-                st.success("✨ Course content generated successfully!")
-                st.rerun()
-                
-        except Exception as e:
-            st.error(f"❌ Error generating course: {str(e)}")
-            st.exception(e)
+        # Extract parameters from prompt
+        params, missing = extract_course_parameters(course_prompt)
+        st.session_state.validation_errors = missing
+        
+        if missing:
+            st.error(f"❌ Missing required information: {', '.join(missing)}")
+            st.warning("Please update your course description to include all required details and try again.")
+        else:
+            try:
+                with st.spinner("🤖 Generating course content... This may take a few minutes."):
+                    # Initialize LangChain agent
+                    agent = CourseContentAgentLangChain(api_key=api_key, model=model)
+                    
+                    # Generate course
+                    course = agent.generate_complete_course(
+                        topic=params['topic'],
+                        duration_weeks=params['duration_weeks'],
+                        difficulty=params['difficulty'],
+                        target_audience=params['target_audience'],
+                        lessons_per_module=params['lessons_per_module']
+                    )
+                    
+                    # Store in session state
+                    st.session_state.course_content = agent.export_to_dict(course)
+                    st.session_state.validation_errors = []
+                    
+                    st.success("✨ Course content generated successfully!")
+                    st.rerun()
+                    
+            except Exception as e:
+                st.error(f"❌ Error generating course: {str(e)}")
+                st.exception(e)
 
 # Display generated content
 if st.session_state.course_content:
