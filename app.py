@@ -547,8 +547,22 @@ if st.session_state.course_content:
         
         roadmap = st.session_state.course_roadmap
         
-        # Roadmap summary
-        with st.expander("📊 Roadmap Overview", expanded=True):
+        # Summary Table - First Output
+        st.subheader("📊 Weekly Schedule Summary")
+        
+        # Create roadmap object for table generation
+        roadmap_agent = CourseRoadmapAgent(api_key=api_key, model=model)
+        from agent.roadmap_agent import CourseRoadmap
+        roadmap_obj = CourseRoadmap(**roadmap)
+        
+        # Display summary table
+        summary_table = roadmap_agent.generate_summary_table(roadmap_obj)
+        st.markdown(summary_table)
+        
+        st.markdown("---")
+        
+        # Roadmap overview
+        with st.expander("📊 Roadmap Overview", expanded=False):
             col_r1, col_r2, col_r3, col_r4 = st.columns(4)
             
             with col_r1:
@@ -568,7 +582,7 @@ if st.session_state.course_content:
                 st.write(roadmap['pacing_recommendations'])
         
         # Weekly schedule
-        with st.expander("📅 Weekly Schedule", expanded=True):
+        with st.expander("📅 Weekly Schedule Details", expanded=False):
             for week in roadmap['weekly_schedule']:
                 st.markdown(f"### {week['week_title']}")
                 
@@ -615,14 +629,14 @@ if st.session_state.course_content:
                 for idx, tip in enumerate(roadmap['study_tips'], 1):
                     st.write(f"{idx}. {tip}")
         
-        # Roadmap export
-        st.markdown("### Export Roadmap")
-        roadmap_col1, roadmap_col2 = st.columns(2)
+        # Roadmap export - Second Output (PDF with complete details)
+        st.markdown("### 📥 Export Roadmap")
+        roadmap_col1, roadmap_col2, roadmap_col3 = st.columns(3)
         
         with roadmap_col1:
             roadmap_json = json.dumps(roadmap, indent=2, ensure_ascii=False)
             st.download_button(
-                label="📄 Download Roadmap (JSON)",
+                label="📄 Download JSON",
                 data=roadmap_json,
                 file_name=f"roadmap_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
                 mime="application/json",
@@ -637,12 +651,49 @@ if st.session_state.course_content:
             roadmap_markdown = roadmap_agent.format_roadmap_markdown(roadmap_obj)
             
             st.download_button(
-                label="📝 Download Roadmap (Markdown)",
+                label="📝 Download Markdown",
                 data=roadmap_markdown,
                 file_name=f"roadmap_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md",
                 mime="text/markdown",
                 use_container_width=True
             )
+        
+        with roadmap_col3:
+            # PDF export button
+            if st.button("📄 Generate PDF", use_container_width=True, key="pdf_export"):
+                try:
+                    with st.spinner("📄 Generating PDF..."):
+                        import tempfile
+                        
+                        # Create temp file
+                        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
+                            pdf_path = tmp_file.name
+                        
+                        # Generate PDF
+                        roadmap_agent.export_to_pdf(roadmap_obj, pdf_path)
+                        
+                        # Read PDF file
+                        with open(pdf_path, 'rb') as f:
+                            pdf_data = f.read()
+                        
+                        # Clean up temp file
+                        import os
+                        os.unlink(pdf_path)
+                        
+                        # Offer download
+                        st.download_button(
+                            label="⬇️ Download PDF",
+                            data=pdf_data,
+                            file_name=f"roadmap_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                            mime="application/pdf",
+                            use_container_width=True
+                        )
+                        st.success("✅ PDF generated successfully!")
+                        
+                except ImportError:
+                    st.error("❌ PDF generation requires additional libraries. Install: pip install markdown2 weasyprint")
+                except Exception as e:
+                    st.error(f"❌ Error generating PDF: {str(e)}")
 
 # Footer
 st.divider()

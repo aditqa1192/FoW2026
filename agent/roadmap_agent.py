@@ -375,6 +375,142 @@ Return ONLY valid JSON without markdown formatting.""",
             md.append("")
         
         return "\n".join(md)
+    
+    def generate_summary_table(self, roadmap: CourseRoadmap) -> str:
+        """
+        Generate a summary table of weekly schedule
+        
+        Args:
+            roadmap: CourseRoadmap object
+            
+        Returns:
+            Markdown table string
+        """
+        table = []
+        table.append("| Week | Week Title | Modules Covered | Estimated Hours |")
+        table.append("|------|------------|-----------------|-----------------|")
+        
+        for week in roadmap.weekly_schedule:
+            modules_str = ", ".join(week.modules_covered) if week.modules_covered else "N/A"
+            # Truncate long module names
+            if len(modules_str) > 60:
+                modules_str = modules_str[:57] + "..."
+            
+            table.append(f"| {week.week_number} | {week.week_title} | {modules_str} | {week.estimated_hours} hrs |")
+        
+        # Add totals row
+        table.append(f"| **Total** | **{roadmap.total_duration_weeks} weeks** | **{roadmap.total_modules} modules** | **{roadmap.total_estimated_hours} hrs** |")
+        
+        return "\n".join(table)
+    
+    def export_to_pdf(self, roadmap: CourseRoadmap, filepath: str):
+        """
+        Export roadmap to PDF file using markdown2pdf
+        
+        Args:
+            roadmap: CourseRoadmap object
+            filepath: Output PDF file path
+        """
+        try:
+            from markdown2 import markdown
+            from weasyprint import HTML, CSS
+            from weasyprint.text.fonts import FontConfiguration
+            
+            # Generate markdown content
+            md_content = self.format_roadmap_markdown(roadmap)
+            
+            # Convert markdown to HTML
+            html_content = markdown(md_content, extras=['tables', 'fenced-code-blocks'])
+            
+            # Add CSS styling
+            css_style = """
+            <style>
+                @page {
+                    size: A4;
+                    margin: 2cm;
+                }
+                body {
+                    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                    line-height: 1.6;
+                    color: #333;
+                    max-width: 100%;
+                }
+                h1 {
+                    color: #2c3e50;
+                    border-bottom: 3px solid #3498db;
+                    padding-bottom: 10px;
+                    margin-top: 20px;
+                }
+                h2 {
+                    color: #34495e;
+                    border-bottom: 2px solid #95a5a6;
+                    padding-bottom: 8px;
+                    margin-top: 25px;
+                }
+                h3 {
+                    color: #2c3e50;
+                    margin-top: 20px;
+                }
+                table {
+                    border-collapse: collapse;
+                    width: 100%;
+                    margin: 15px 0;
+                }
+                th, td {
+                    border: 1px solid #ddd;
+                    padding: 12px;
+                    text-align: left;
+                }
+                th {
+                    background-color: #3498db;
+                    color: white;
+                    font-weight: bold;
+                }
+                tr:nth-child(even) {
+                    background-color: #f2f2f2;
+                }
+                ul, ol {
+                    margin: 10px 0;
+                    padding-left: 30px;
+                }
+                li {
+                    margin: 5px 0;
+                }
+                strong {
+                    color: #2c3e50;
+                }
+            </style>
+            """
+            
+            full_html = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                {css_style}
+            </head>
+            <body>
+                {html_content}
+            </body>
+            </html>
+            """
+            
+            # Generate PDF
+            font_config = FontConfiguration()
+            HTML(string=full_html).write_pdf(
+                filepath,
+                font_config=font_config
+            )
+            
+            print(f"PDF roadmap exported to {filepath}")
+            
+        except ImportError as e:
+            print(f"Error: Required libraries not installed. Run: pip install markdown2 weasyprint")
+            print(f"Details: {e}")
+            raise
+        except Exception as e:
+            print(f"Error generating PDF: {e}")
+            raise
 
 
 def format_roadmap_summary(roadmap: CourseRoadmap) -> str:
