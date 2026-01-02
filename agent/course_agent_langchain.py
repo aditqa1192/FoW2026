@@ -103,26 +103,30 @@ class CourseContentAgentLangChain:
         """
         # Create prompt template
         outline_prompt = PromptTemplate(
-            template="""Create a comprehensive course outline for the following specifications:
+            template="""You are an expert course designer. Create a comprehensive course outline STRICTLY about the specified topic.
 
-Topic: {topic}
-Difficulty Level: {difficulty}
-Target Audience: {target_audience}
-Duration: {duration_weeks} weeks
-Number of Modules: {num_modules}
+CRITICAL INSTRUCTION: The entire course MUST be about "{topic}" - do NOT generate content about any other subject. Every module, lesson, and outcome must directly relate to "{topic}".
+
+Course Specifications:
+- Topic: {topic}
+- Difficulty Level: {difficulty}
+- Target Audience: {target_audience}
+- Duration: {duration_weeks} weeks
+- Number of Modules: {num_modules}
 
 Generate a JSON object with the following structure:
 {{
-    "title": "Course title",
-    "description": "1-2 sentence course description",
-    "prerequisites": ["prerequisite 1", "prerequisite 2", "prerequisite 3"],
-    "learning_outcomes": ["outcome 1", "outcome 2", "outcome 3", "outcome 4", "outcome 5"],
+    "title": "[Course title MUST include and be about '{topic}']",
+    "description": "[1-2 sentences describing this course on {topic}]",
+    "prerequisites": ["prerequisite 1 for learning {topic}", "prerequisite 2 for {topic}", "prerequisite 3"],
+    "learning_outcomes": ["learners will be able to [skill 1 in {topic}]", "learners will understand [concept 2 in {topic}]", "learners will apply [technique 3 in {topic}]", "outcome 4 for {topic}", "outcome 5 for {topic}"],
     "modules": [
-        {{"title": "Module title", "description": "Module description"}}
+        {{"title": "Module 1: [Specific aspect of {topic}]", "description": "This module covers [specific content about {topic}]"}},
+        {{"title": "Module 2: [Another aspect of {topic}]", "description": "This module covers [more content about {topic}]"}}
     ]
 }}
 
-Return ONLY valid JSON without any markdown formatting or code blocks.""",
+VERIFY: Every field must relate to "{topic}". Return ONLY valid JSON without any markdown formatting or code blocks.""",
             input_variables=["topic", "difficulty", "target_audience", "duration_weeks", "num_modules"]
         )
         
@@ -164,34 +168,36 @@ Return ONLY valid JSON without any markdown formatting or code blocks.""",
         """Generate a batch of lessons using LangChain"""
         
         lesson_prompt = PromptTemplate(
-            template="""Create {num_lessons} detailed lesson(s) for the following module:
+            template="""You are creating educational lesson content for a specific module.
 
 Module: {module_title}
 Course Context: {course_context}
 
-Generate a JSON array with {num_lessons} lesson objects. Each lesson must have:
-- title: Lesson title
+CRITICAL INSTRUCTION: All {num_lessons} lesson(s) MUST be directly relevant to "{module_title}" and the course context provided. Do NOT create content about unrelated topics.
+
+Generate a JSON array with {num_lessons} lesson object(s). Each lesson must have:
+- title: Specific lesson title related to "{module_title}"
 - duration_minutes: 45
-- learning_objectives: Array of 3 learning objectives
-- content: Detailed 200-300 word explanation
-- key_points: Array of 4 key takeaways
-- activities: Array of 2 practical activities
-- assessment_questions: Array with 1 question-answer pair
+- learning_objectives: Array of 3 concrete learning objectives for this lesson on {module_title}
+- content: Detailed 200-300 word educational explanation about the lesson topic
+- key_points: Array of 4 key takeaways from this lesson
+- activities: Array of 2 practical activities related to the lesson
+- assessment_questions: Array with 1 question-answer pair testing lesson understanding
 
 Example structure:
 [
   {{
-    "title": "Lesson title here",
+    "title": "[Specific lesson title directly related to {module_title}]",
     "duration_minutes": 45,
-    "learning_objectives": ["objective 1", "objective 2", "objective 3"],
-    "content": "Detailed explanation of the lesson content...",
-    "key_points": ["point 1", "point 2", "point 3", "point 4"],
-    "activities": ["activity 1", "activity 2"],
-    "assessment_questions": [{{"question": "question text", "answer": "answer text"}}]
+    "learning_objectives": ["Learn [specific skill from {module_title}]", "Understand [concept from {module_title}]", "Apply [technique from {module_title}]"],
+    "content": "Detailed 200-300 word explanation providing educational content about this specific lesson topic. Ensure the content is informative, accurate, and directly relevant to {module_title}...",
+    "key_points": ["Key takeaway 1 from lesson", "Key takeaway 2", "Key takeaway 3", "Key takeaway 4"],
+    "activities": ["Hands-on activity 1 related to the lesson", "Practical exercise 2 related to the lesson"],
+    "assessment_questions": [{{"question": "Question testing understanding of this lesson", "answer": "Correct answer with explanation"}}]
   }}
 ]
 
-Return ONLY valid JSON array without any markdown formatting or code blocks.""",
+VERIFY: All content must relate to "{module_title}". Return ONLY valid JSON array without any markdown formatting or code blocks.""",
             input_variables=["module_title", "course_context", "num_lessons"]
         )
         
@@ -270,6 +276,18 @@ Return ONLY valid JSON array without any markdown formatting or code blocks.""",
         """
         print(f"Generating course outline for: {topic}")
         outline = self.generate_course_outline(topic, duration_weeks, difficulty, target_audience)
+        
+        # Verify the generated outline is actually about the requested topic
+        generated_title = outline.get("title", "").lower()
+        topic_keywords = topic.lower().split()
+        topic_match = any(keyword in generated_title for keyword in topic_keywords if len(keyword) > 3)
+        
+        if not topic_match:
+            print(f"WARNING: Generated course title '{outline.get('title')}' may not match requested topic '{topic}'")
+            print(f"Forcing title to match topic...")
+            # Force the title to include the topic if it doesn't
+            outline["title"] = f"{topic} - {difficulty.capitalize()} Course"
+            print(f"Updated title to: {outline['title']}")
         
         course_data = {
             "title": outline.get("title", topic),
