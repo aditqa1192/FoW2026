@@ -480,7 +480,7 @@ if st.session_state.course_content:
     st.divider()
     st.header("💾 Export Options")
     
-    export_col1, export_col2, export_col3, export_col4 = st.columns(4)
+    export_col1, export_col2, export_col3 = st.columns(3)
     
     with export_col1:
         # JSON export
@@ -515,7 +515,49 @@ if st.session_state.course_content:
             use_container_width=True
         )
     
+    # Second row with PDF and Roadmap buttons
+    st.write("")  # Small spacing
+    export_col4, export_col5 = st.columns(2)
+    
     with export_col4:
+        # PDF export button
+        if st.button("📄 Generate PDF", use_container_width=True, key="course_pdf_export"):
+            try:
+                with st.spinner("📄 Generating PDF..."):
+                    import tempfile
+                    from agent.content_generator import export_course_to_pdf
+                    
+                    # Create temp file
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
+                        pdf_path = tmp_file.name
+                    
+                    # Generate PDF
+                    export_course_to_pdf(course, pdf_path)
+                    
+                    # Read PDF file
+                    with open(pdf_path, 'rb') as f:
+                        pdf_data = f.read()
+                    
+                    # Clean up temp file
+                    import os
+                    os.unlink(pdf_path)
+                    
+                    # Offer download
+                    st.download_button(
+                        label="⬇️ Download Course PDF",
+                        data=pdf_data,
+                        file_name=f"course_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                        mime="application/pdf",
+                        use_container_width=True
+                    )
+                    st.success("✅ Course PDF generated successfully!")
+                    
+            except ImportError:
+                st.error("❌ PDF generation requires additional libraries. Install: pip install xhtml2pdf")
+            except Exception as e:
+                st.error(f"❌ Error generating PDF: {str(e)}")
+    
+    with export_col5:
         # Generate roadmap button
         if st.button("🗺️ Generate Roadmap", use_container_width=True, type="secondary"):
             try:

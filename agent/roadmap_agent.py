@@ -416,8 +416,14 @@ Return ONLY valid JSON without markdown formatting.""",
             from xhtml2pdf import pisa
             from io import BytesIO
             
-            # Generate markdown content
+            # Generate markdown content with summary table at the top
+            summary_table = self.generate_summary_table(roadmap)
             md_content = self.format_roadmap_markdown(roadmap)
+            
+            # Insert summary table after the overview section
+            md_parts = md_content.split('## Pacing Recommendations', 1)
+            if len(md_parts) == 2:
+                md_content = md_parts[0] + '\n## Weekly Schedule Summary\n\n' + summary_table + '\n\n## Pacing Recommendations' + md_parts[1]
             
             # Convert markdown to HTML
             html_content = markdown(md_content, extras=['tables', 'fenced-code-blocks'])

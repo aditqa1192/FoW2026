@@ -252,3 +252,38 @@ def format_course_summary(course_dict: Dict) -> str:
 """
     
     return summary
+
+
+def export_course_to_pdf(course_dict: Dict, filepath: str):
+    """
+    Export course content to PDF file
+    
+    Args:
+        course_dict: Course content dictionary
+        filepath: Output PDF file path
+    """
+    try:
+        from xhtml2pdf import pisa
+        
+        # Generate HTML content
+        html_content = generate_html_course(course_dict)
+        
+        # Generate PDF
+        with open(filepath, "wb") as pdf_file:
+            pisa_status = pisa.CreatePDF(
+                html_content,
+                dest=pdf_file
+            )
+        
+        if pisa_status.err:
+            raise Exception(f"PDF generation failed with error code: {pisa_status.err}")
+        
+        print(f"Course PDF exported to {filepath}")
+        
+    except ImportError as e:
+        print(f"Error: Required libraries not installed. Run: pip install xhtml2pdf")
+        print(f"Details: {e}")
+        raise
+    except Exception as e:
+        print(f"Error generating PDF: {e}")
+        raise
