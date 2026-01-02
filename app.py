@@ -691,7 +691,7 @@ if st.session_state.course_content:
                         st.success("✅ PDF generated successfully!")
                         
                 except ImportError:
-                    st.error("❌ PDF generation requires additional libraries. Install: pip install markdown2 weasyprint")
+                    st.error("❌ PDF generation requires additional libraries. Install: pip install markdown2 xhtml2pdf")
                 except Exception as e:
                     st.error(f"❌ Error generating PDF: {str(e)}")
 

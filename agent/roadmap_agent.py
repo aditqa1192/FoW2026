@@ -405,7 +405,7 @@ Return ONLY valid JSON without markdown formatting.""",
     
     def export_to_pdf(self, roadmap: CourseRoadmap, filepath: str):
         """
-        Export roadmap to PDF file using markdown2pdf
+        Export roadmap to PDF file using xhtml2pdf (Windows-friendly)
         
         Args:
             roadmap: CourseRoadmap object
@@ -413,8 +413,8 @@ Return ONLY valid JSON without markdown formatting.""",
         """
         try:
             from markdown2 import markdown
-            from weasyprint import HTML, CSS
-            from weasyprint.text.fonts import FontConfiguration
+            from xhtml2pdf import pisa
+            from io import BytesIO
             
             # Generate markdown content
             md_content = self.format_roadmap_markdown(roadmap)
@@ -430,35 +430,39 @@ Return ONLY valid JSON without markdown formatting.""",
                     margin: 2cm;
                 }
                 body {
-                    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                    font-family: Arial, Helvetica, sans-serif;
                     line-height: 1.6;
                     color: #333;
-                    max-width: 100%;
+                    font-size: 11pt;
                 }
                 h1 {
                     color: #2c3e50;
                     border-bottom: 3px solid #3498db;
                     padding-bottom: 10px;
                     margin-top: 20px;
+                    font-size: 24pt;
                 }
                 h2 {
                     color: #34495e;
                     border-bottom: 2px solid #95a5a6;
                     padding-bottom: 8px;
                     margin-top: 25px;
+                    font-size: 18pt;
                 }
                 h3 {
                     color: #2c3e50;
                     margin-top: 20px;
+                    font-size: 14pt;
                 }
                 table {
                     border-collapse: collapse;
                     width: 100%;
                     margin: 15px 0;
+                    font-size: 10pt;
                 }
                 th, td {
                     border: 1px solid #ddd;
-                    padding: 12px;
+                    padding: 10px;
                     text-align: left;
                 }
                 th {
@@ -479,6 +483,9 @@ Return ONLY valid JSON without markdown formatting.""",
                 strong {
                     color: #2c3e50;
                 }
+                p {
+                    margin: 8px 0;
+                }
             </style>
             """
             
@@ -496,16 +503,19 @@ Return ONLY valid JSON without markdown formatting.""",
             """
             
             # Generate PDF
-            font_config = FontConfiguration()
-            HTML(string=full_html).write_pdf(
-                filepath,
-                font_config=font_config
-            )
+            with open(filepath, "wb") as pdf_file:
+                pisa_status = pisa.CreatePDF(
+                    full_html,
+                    dest=pdf_file
+                )
+            
+            if pisa_status.err:
+                raise Exception(f"PDF generation failed with error code: {pisa_status.err}")
             
             print(f"PDF roadmap exported to {filepath}")
             
         except ImportError as e:
-            print(f"Error: Required libraries not installed. Run: pip install markdown2 weasyprint")
+            print(f"Error: Required libraries not installed. Run: pip install markdown2 xhtml2pdf")
             print(f"Details: {e}")
             raise
         except Exception as e:
