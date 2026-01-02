@@ -55,6 +55,33 @@ class CourseRoadmapAgent:
     Agent that generates course roadmaps and learning timelines
     """
     
+    @staticmethod
+    def _normalize_weekly_schedule(week_data: Dict) -> Dict:
+        """
+        Normalize weekly schedule data to ensure all list fields are proper lists
+        
+        Args:
+            week_data: Raw weekly schedule dictionary
+            
+        Returns:
+            Normalized weekly schedule dictionary
+        """
+        # Fields that should be lists
+        list_fields = ['topics', 'modules_covered', 'milestones', 'deliverables']
+        
+        for field in list_fields:
+            value = week_data.get(field, [])
+            # Convert string to single-item list
+            if isinstance(value, str):
+                logger.warning(f"Converting '{field}' from string to list: {value[:50]}...")
+                week_data[field] = [value] if value else []
+            # Ensure it's a list
+            elif not isinstance(value, list):
+                logger.warning(f"Converting '{field}' from {type(value).__name__} to list")
+                week_data[field] = []
+        
+        return week_data
+    
     def __init__(self, api_key: Optional[str] = None, model: str = "gemini-2.5-flash"):
         """
         Initialize the roadmap agent
@@ -190,7 +217,9 @@ Generate a JSON object with this structure:
     "pacing_recommendations": "2-3 sentences on how to pace learning through this course for best results"
 }}
 
-IMPORTANT: 
+CRITICAL REQUIREMENTS:
+- ALL array fields (topics, modules_covered, milestones, deliverables, study_tips) MUST be arrays, never strings
+- deliverables MUST be an array like ["item1", "item2"] even if only one item
 - Create exactly {duration_weeks} weekly schedule entries
 - Distribute all modules across the weeks
 - Include at least one milestone every 2 weeks
@@ -247,27 +276,53 @@ Return ONLY valid JSON without markdown formatting.""",
         # Calculate total estimated hours
         total_hours = sum(week.get('estimated_hours', 0) for week in result.get('weekly_schedule', []))
         
-        # Build the roadmap
-        roadmap_data = {
-            "course_title": course_title,
-            "total_duration_weeks": duration_weeks,
-            "start_date": start_date,
-            "end_date": calculated_end_date,
-            "total_modules": len(modules),
-            "total_estimated_hours": round(total_hours, 1),
-            "weekly_schedule": [
-                WeeklySchedule(**week) for week in result.get('weekly_schedule', [])
-            ],
-            "milestones": [
-                Milestone(**milestone) for milestone in result.get('milestones', [])
-            ],
-            "study_tips": result.get('study_tips', []),
-            "pacing_recommendations": result.get('pacing_recommendations', '')
-        }
+        # Normalize weekly schedule data
+        logger.debug(f"Normalizing {len(result.get('weekly_schedule', []))} weekly schedule entries")
+        normalized_weeks = []
+        for idx, week in enumerate(result.get('weekly_schedule', [])):
+            try:
+                normalized_week = self._normalize_weekly_schedule(week)
+                normalized_weeks.append(normalized_week)
+                logger.debug(f"Week {idx + 1} normalized successfully")
+            except Exception as e:
+                logger.error(f"Error normalizing week {idx + 1}: {e}")
+                logger.debug(f"Problematic week data: {week}")
+                raise
         
-        logger.info(f"Roadmap generation completed for: {course_title}")
-        logger.info(f"Generated {len(roadmap_data['weekly_schedule'])} weeks, {len(roadmap_data['milestones'])} milestones, total {total_hours:.1f} hours")
-        return CourseRoadmap(**roadmap_data)
+        # Build the roadmap with validation
+        try:
+            weekly_schedule_objects = []
+            for idx, week in enumerate(normalized_weeks):
+                try:
+                    weekly_obj = WeeklySchedule(**week)
+                    weekly_schedule_objects.append(weekly_obj)
+                except Exception as e:
+                    logger.error(f"Validation error for week {idx + 1}: {e}")
+                    logger.debug(f"Week data that failed validation: {week}")
+                    raise
+            
+            roadmap_data = {
+                "course_title": course_title,
+                "total_duration_weeks": duration_weeks,
+                "start_date": start_date,
+                "end_date": calculated_end_date,
+                "total_modules": len(modules),
+                "total_estimated_hours": round(total_hours, 1),
+                "weekly_schedule": weekly_schedule_objects,
+                "milestones": [
+                    Milestone(**milestone) for milestone in result.get('milestones', [])
+                ],
+                "study_tips": result.get('study_tips', []),
+                "pacing_recommendations": result.get('pacing_recommendations', '')
+            }
+            
+            logger.info(f"Roadmap generation completed for: {course_title}")
+            logger.info(f"Generated {len(roadmap_data['weekly_schedule'])} weeks, {len(roadmap_data['milestones'])} milestones, total {total_hours:.1f} hours")
+            return CourseRoadmap(**roadmap_data)
+            
+        except Exception as e:
+            logger.error(f"Error building roadmap data structure: {e}", exc_info=True)
+            raise
     
     def generate_roadmap_from_outline(self, course_title: str, module_titles: List[str],
                                      duration_weeks: int, difficulty: str = "beginner",
