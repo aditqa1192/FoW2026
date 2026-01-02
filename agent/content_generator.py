@@ -2,7 +2,10 @@
 Content generation utilities
 """
 
+import logging
 from typing import List, Dict
+
+logger = logging.getLogger(__name__)
 
 
 def generate_markdown_course(course_dict: Dict) -> str:
@@ -262,11 +265,14 @@ def export_course_to_pdf(course_dict: Dict, filepath: str):
         course_dict: Course content dictionary
         filepath: Output PDF file path
     """
+    logger.info(f"Exporting course to PDF: {filepath}")
+    logger.debug(f"Course: {course_dict.get('title', 'Unknown')}")
     try:
         from xhtml2pdf import pisa
         
         # Generate HTML content
         html_content = generate_html_course(course_dict)
+        logger.debug("HTML content generated for PDF conversion")
         
         # Generate PDF
         with open(filepath, "wb") as pdf_file:
@@ -276,14 +282,19 @@ def export_course_to_pdf(course_dict: Dict, filepath: str):
             )
         
         if pisa_status.err:
+            logger.error(f"PDF generation failed with error code: {pisa_status.err}")
             raise Exception(f"PDF generation failed with error code: {pisa_status.err}")
         
+        logger.info(f"Course PDF exported successfully to {filepath}")
         print(f"Course PDF exported to {filepath}")
         
     except ImportError as e:
+        logger.error(f"Required libraries not installed for PDF export: {e}")
         print(f"Error: Required libraries not installed. Run: pip install xhtml2pdf")
         print(f"Details: {e}")
         raise
     except Exception as e:
+        logger.error(f"Error generating course PDF: {e}")
+        print(f"Error generating PDF: {e}")
         print(f"Error generating PDF: {e}")
         raise

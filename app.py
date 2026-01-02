@@ -5,6 +5,7 @@ Interactive web interface for generating course content
 
 import streamlit as st
 import os
+import logging
 from dotenv import load_dotenv
 import json
 from datetime import datetime
@@ -13,9 +14,15 @@ import re
 from agent import CourseContentAgent, generate_markdown_course, generate_html_course, format_course_summary
 from agent.course_agent_langchain import CourseContentAgentLangChain
 from agent.roadmap_agent import CourseRoadmapAgent, format_roadmap_summary
+from utils.logger_config import setup_logging
 
 # Load environment variables
 load_dotenv()
+
+# Setup logging
+setup_logging(log_dir="logs", log_level=logging.DEBUG)
+logger = logging.getLogger(__name__)
+logger.info("Starting Lilaq Course Content Agent application")
 
 # Page configuration
 st.set_page_config(
@@ -368,8 +375,11 @@ if generate_button:
         if missing:
             st.error(f"❌ Missing required information: {', '.join(missing)}")
             st.warning("Please update your course description to include all required details and try again.")
+            logger.warning(f"Course generation failed - missing parameters: {missing}")
         else:
             try:
+                logger.info(f"Starting course generation from UI for topic: {params['topic']}")
+                logger.debug(f"Generation parameters: {params}")
                 with st.spinner("🤖 Generating course content... This may take a few minutes."):
                     # Initialize LangChain agent
                     agent = CourseContentAgentLangChain(api_key=api_key, model=model)
@@ -387,10 +397,12 @@ if generate_button:
                     st.session_state.course_content = agent.export_to_dict(course)
                     st.session_state.validation_errors = []
                     
+                    logger.info("Course content generated successfully from UI")
                     st.success("✨ Course content generated successfully!")
                     st.rerun()
                     
             except Exception as e:
+                logger.error(f"Error generating course from UI: {str(e)}", exc_info=True)
                 st.error(f"❌ Error generating course: {str(e)}")
                 st.exception(e)
 
@@ -523,6 +535,7 @@ if st.session_state.course_content:
         # PDF export button
         if st.button("📄 Generate PDF", use_container_width=True, key="course_pdf_export"):
             try:
+                logger.info(f"Generating course PDF for: {course['title']}")
                 with st.spinner("📄 Generating PDF..."):
                     import tempfile
                     from agent.content_generator import export_course_to_pdf
@@ -533,6 +546,7 @@ if st.session_state.course_content:
                     
                     # Generate PDF
                     export_course_to_pdf(course, pdf_path)
+                    logger.debug(f"Course PDF generated at temporary path: {pdf_path}")
                     
                     # Read PDF file
                     with open(pdf_path, 'rb') as f:
@@ -541,6 +555,7 @@ if st.session_state.course_content:
                     # Clean up temp file
                     import os
                     os.unlink(pdf_path)
+                    logger.info("Course PDF generated successfully")
                     
                     # Offer download
                     st.download_button(
@@ -555,12 +570,14 @@ if st.session_state.course_content:
             except ImportError:
                 st.error("❌ PDF generation requires additional libraries. Install: pip install xhtml2pdf")
             except Exception as e:
+                logger.error(f"Error generating course PDF: {str(e)}", exc_info=True)
                 st.error(f"❌ Error generating PDF: {str(e)}")
     
     with export_col5:
         # Generate roadmap button
         if st.button("🗺️ Generate Roadmap", use_container_width=True, type="secondary"):
             try:
+                logger.info(f"Starting roadmap generation from UI for course: {course['title']}")
                 with st.spinner("🗺️ Generating course roadmap..."):
                     roadmap_agent = CourseRoadmapAgent(api_key=api_key, model=model)
                     
@@ -575,10 +592,12 @@ if st.session_state.course_content:
                     )
                     
                     st.session_state.course_roadmap = roadmap_agent.export_to_dict(roadmap)
+                    logger.info("Roadmap generated successfully from UI")
                     st.success("✨ Roadmap generated successfully!")
                     st.rerun()
                     
             except Exception as e:
+                logger.error(f"Error generating roadmap from UI: {str(e)}", exc_info=True)
                 st.error(f"❌ Error generating roadmap: {str(e)}")
                 st.exception(e)
     
@@ -704,6 +723,7 @@ if st.session_state.course_content:
             # PDF export button
             if st.button("📄 Generate PDF", use_container_width=True, key="pdf_export"):
                 try:
+                    logger.info(f"Generating roadmap PDF for: {roadmap['course_title']}")
                     with st.spinner("📄 Generating PDF..."):
                         import tempfile
                         
@@ -713,6 +733,7 @@ if st.session_state.course_content:
                         
                         # Generate PDF
                         roadmap_agent.export_to_pdf(roadmap_obj, pdf_path)
+                        logger.debug(f"Roadmap PDF generated at temporary path: {pdf_path}")
                         
                         # Read PDF file
                         with open(pdf_path, 'rb') as f:
@@ -721,6 +742,7 @@ if st.session_state.course_content:
                         # Clean up temp file
                         import os
                         os.unlink(pdf_path)
+                        logger.info("Roadmap PDF generated successfully")
                         
                         # Offer download
                         st.download_button(
@@ -732,9 +754,11 @@ if st.session_state.course_content:
                         )
                         st.success("✅ PDF generated successfully!")
                         
-                except ImportError:
+                except ImportError as e:
+                    logger.error(f"Missing libraries for roadmap PDF: {e}")
                     st.error("❌ PDF generation requires additional libraries. Install: pip install markdown2 xhtml2pdf")
                 except Exception as e:
+                    logger.error(f"Error generating roadmap PDF from UI: {str(e)}", exc_info=True)
                     st.error(f"❌ Error generating PDF: {str(e)}")
 
 # Footer

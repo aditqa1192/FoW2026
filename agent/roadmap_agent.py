@@ -4,6 +4,7 @@ Generates structured learning roadmaps and timelines for courses
 """
 
 import os
+import logging
 from typing import Dict, List, Optional
 from pydantic import BaseModel, Field
 from datetime import datetime, timedelta
@@ -12,6 +13,8 @@ import json
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
+
+logger = logging.getLogger(__name__)
 
 
 class WeeklySchedule(BaseModel):
@@ -60,10 +63,13 @@ class CourseRoadmapAgent:
             api_key: Google API key (defaults to environment variable)
             model: Model to use for generation
         """
+        logger.info("Initializing CourseRoadmapAgent")
         self.api_key = api_key or os.getenv("GOOGLE_API_KEY")
         self.model = model or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        logger.debug(f"Using model: {self.model}")
         
         if not self.api_key:
+            logger.error("Google API key not found")
             raise ValueError("Google API key is required. Set GOOGLE_API_KEY environment variable.")
         
         # Initialize LangChain ChatGoogleGenerativeAI
@@ -77,6 +83,7 @@ class CourseRoadmapAgent:
         )
         
         self.json_parser = JsonOutputParser()
+        logger.info("CourseRoadmapAgent initialized successfully")
     
     def generate_roadmap_from_modules(self, course_title: str, modules: List[Dict],
                                      duration_weeks: int, difficulty: str = "beginner",
@@ -96,6 +103,9 @@ class CourseRoadmapAgent:
         Returns:
             CourseRoadmap object with complete timeline
         """
+        logger.info(f"Starting roadmap generation for course: {course_title}")
+        logger.debug(f"Parameters: duration_weeks={duration_weeks}, difficulty={difficulty}, hours_per_week={hours_per_week}, modules={len(modules)}")
+        
         # Prepare module summary
         module_summary = []
         total_lessons = 0
@@ -255,6 +265,8 @@ Return ONLY valid JSON without markdown formatting.""",
             "pacing_recommendations": result.get('pacing_recommendations', '')
         }
         
+        logger.info(f"Roadmap generation completed for: {course_title}")
+        logger.info(f"Generated {len(roadmap_data['weekly_schedule'])} weeks, {len(roadmap_data['milestones'])} milestones, total {total_hours:.1f} hours")
         return CourseRoadmap(**roadmap_data)
     
     def generate_roadmap_from_outline(self, course_title: str, module_titles: List[str],
@@ -411,6 +423,8 @@ Return ONLY valid JSON without markdown formatting.""",
             roadmap: CourseRoadmap object
             filepath: Output PDF file path
         """
+        logger.info(f"Exporting roadmap to PDF: {filepath}")
+        logger.debug(f"Roadmap: {roadmap.course_title}, weeks={roadmap.total_duration_weeks}")
         try:
             from markdown2 import markdown
             from xhtml2pdf import pisa
@@ -516,15 +530,19 @@ Return ONLY valid JSON without markdown formatting.""",
                 )
             
             if pisa_status.err:
+                logger.error(f"PDF generation failed with error code: {pisa_status.err}")
                 raise Exception(f"PDF generation failed with error code: {pisa_status.err}")
             
+            logger.info(f"PDF roadmap exported successfully to {filepath}")
             print(f"PDF roadmap exported to {filepath}")
             
         except ImportError as e:
+            logger.error(f"Required libraries not installed: {e}")
             print(f"Error: Required libraries not installed. Run: pip install markdown2 xhtml2pdf")
             print(f"Details: {e}")
             raise
         except Exception as e:
+            logger.error(f"Error generating PDF: {e}")
             print(f"Error generating PDF: {e}")
             raise
 

@@ -4,10 +4,13 @@ Generates comprehensive course content based on user specifications
 """
 
 import os
+import logging
 from typing import Dict, List, Optional
 from pydantic import BaseModel, Field
 import google.generativeai as genai
 import json
+
+logger = logging.getLogger(__name__)
 
 
 class Lesson(BaseModel):
@@ -54,13 +57,17 @@ class CourseContentAgent:
             api_key: Google API key (defaults to environment variable)
             model: Model to use for generation
         """
+        logger.info("Initializing CourseContentAgent")
         self.api_key = api_key or os.getenv("GOOGLE_API_KEY")
         self.model = model or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        logger.debug(f"Using model: {self.model}")
         
         if not self.api_key:
+            logger.error("Google API key not found")
             raise ValueError("Google API key is required. Set GOOGLE_API_KEY environment variable.")
         
         genai.configure(api_key=self.api_key)
+        logger.info("Gemini API configured successfully")
         
         # Configure generation settings for better token management
         generation_config = {
@@ -257,6 +264,8 @@ Return ONLY valid JSON array without markdown formatting."""
         Returns:
             Complete CourseContent object
         """
+        logger.info(f"Starting course generation for topic: {topic}")
+        logger.debug(f"Parameters: duration_weeks={duration_weeks}, difficulty={difficulty}, target_audience={target_audience}, lessons_per_module={lessons_per_module}")
         print(f"Generating course outline for: {topic}")
         outline = self.generate_course_outline(topic, duration_weeks, difficulty, target_audience)
         
@@ -266,6 +275,7 @@ Return ONLY valid JSON array without markdown formatting."""
         topic_match = any(keyword in generated_title for keyword in topic_keywords if len(keyword) > 3)
         
         if not topic_match:
+            logger.warning(f"Topic mismatch detected: requested='{topic}', generated='{outline.get('title')}'")
             print(f"WARNING: Generated course title '{outline.get('title')}' may not match requested topic '{topic}'")
             print(f"Regenerating with stricter constraints...")
             # Retry with more explicit prompt
@@ -308,11 +318,13 @@ JSON only, no markdown."""
         for idx, module_info in enumerate(modules):
             module_title = module_info.get("title", f"Module {idx + 1}")
             module_desc = module_info.get("description", "")
+            logger.debug(f"Generating Module {idx + 1}/{len(modules)}: {module_title}")
             print(f"  Module {idx + 1}/{len(modules)}: {module_title}")
             
             # Generate detailed lesson content
             course_context = f"Course: {course_data['title']}. Difficulty: {difficulty}. Audience: {target_audience}"
             lessons_data = self.generate_module_content(module_title, module_desc, course_context, lessons_per_module)
+            logger.debug(f"Generated {len(lessons_data)} lessons for module: {module_title}")
             
             # Convert lessons to Lesson objects
             lessons = []
@@ -341,6 +353,8 @@ JSON only, no markdown."""
             
             course_data["modules"].append(module)
         
+        logger.info(f"Course generation completed: {course_data['title']}")
+        logger.info(f"Total modules: {len(course_data['modules'])}, Total lessons: {sum(len(m.lessons) for m in course_data['modules'])}")
         return CourseContent(**course_data)
     
     def export_to_dict(self, course: CourseContent) -> Dict:
