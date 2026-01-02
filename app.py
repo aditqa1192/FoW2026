@@ -70,7 +70,7 @@ if 'validation_errors' not in st.session_state:
 
 def extract_course_parameters(prompt):
     """
-    Extract course parameters from user prompt.
+    Extract course parameters from user prompt using enhanced natural language processing.
     Returns a dictionary with extracted parameters and a list of missing required fields.
     """
     params = {
@@ -82,68 +82,102 @@ def extract_course_parameters(prompt):
     }
     
     missing_fields = []
+    prompt_lower = prompt.lower()
     
-    # Extract topic (usually the first significant phrase or after keywords)
+    # Extract topic - much more flexible patterns
     topic_patterns = [
-        r'course (?:on|about|for|in)\s+([^\n,.]+)',
-        r'(?:create|generate|build)\s+(?:a\s+)?course\s+(?:on|about|for|in)\s+([^\n,.]+)',
-        r'topic:\s*([^\n,.]+)',
-        r'^([^.\n]+?)(?:\s+course|\s+for|\s+duration|\s+difficulty|$)'
+        # Direct mentions with keywords
+        r'(?:course|class|training|program|curriculum)\s+(?:on|about|for|in|regarding|covering)\s+([^\n,.;]+?)(?:\s+(?:for|over|duration|difficulty|that|which|with|lasting|taking)|[,.\n]|$)',
+        r'(?:teach|learn|study|master|understand)\s+(?:about\s+)?([^\n,.;]+?)(?:\s+(?:for|over|duration|in|within)|[,.\n]|$)',
+        r'(?:create|generate|build|make|design|develop)\s+(?:a\s+)?(?:course|class|training|program)?\s*(?:on|about|for|in)?\s+([^\n,.;]+?)(?:\s+(?:for|over|duration|difficulty|that|which)|[,.\n]|$)',
+        # Topic label
+        r'topic\s*[:\-]\s*([^\n,.;]+?)(?:\s+(?:for|over|duration)|[,.\n]|$)',
+        r'subject\s*[:\-]\s*([^\n,.;]+?)(?:\s+(?:for|over|duration)|[,.\n]|$)',
+        # Simple first sentence extraction
+        r'^(?:i\s+(?:want|need|would like)\s+(?:to\s+)?(?:learn|study|create)\s+)?([^\n,.;]+?)(?:\s+(?:for|in|over|duration|with|that is|which is)|[,.\n]|$)',
     ]
     
     for pattern in topic_patterns:
-        match = re.search(pattern, prompt, re.IGNORECASE)
+        match = re.search(pattern, prompt_lower, re.IGNORECASE)
         if match:
-            params['topic'] = match.group(1).strip()
-            break
+            topic = match.group(1).strip()
+            # Clean up common prefixes/suffixes
+            topic = re.sub(r'^(?:a|an|the)\s+', '', topic, flags=re.IGNORECASE)
+            topic = re.sub(r'\s+(?:course|class|training|program)$', '', topic, flags=re.IGNORECASE)
+            if len(topic) > 3:  # Must be meaningful
+                params['topic'] = topic
+                break
     
-    # Extract duration in weeks
+    # Extract duration - more flexible
     duration_patterns = [
-        r'(\d+)\s*weeks?',
-        r'duration:\s*(\d+)\s*weeks?',
-        r'over\s+(\d+)\s*weeks?',
-        r'for\s+(\d+)\s*weeks?'
+        r'(\d+)\s*(?:-|to)?\s*weeks?(?:\s+long)?',
+        r'(?:duration|lasting|takes?|span(?:ning)?|over|in)\s*[:\-]?\s*(\d+)\s*weeks?',
+        r'(?:for|across|throughout)\s+(\d+)\s*weeks?',
+        r'(\d+)\s*week\s+(?:course|program|class)',
+        r'(?:weekly|week by week)\s+(?:for\s+)?(\d+)\s+weeks?',
     ]
     
     for pattern in duration_patterns:
-        match = re.search(pattern, prompt, re.IGNORECASE)
+        match = re.search(pattern, prompt_lower, re.IGNORECASE)
         if match:
-            params['duration_weeks'] = int(match.group(1))
+            weeks = int(match.group(1))
+            if 1 <= weeks <= 52:  # Sanity check
+                params['duration_weeks'] = weeks
+                break
+    
+    # Extract difficulty level - synonyms and variations
+    difficulty_mappings = {
+        'beginner': ['beginner', 'beginners', 'basic', 'introductory', 'intro', 'fundamental', 'elementary', 'starter', 'novice', 'entry level', 'entry-level', 'starting'],
+        'intermediate': ['intermediate', 'mid level', 'mid-level', 'moderate', 'standard', 'regular', 'average'],
+        'advanced': ['advanced', 'expert', 'professional', 'senior', 'high level', 'high-level', 'complex', 'sophisticated', 'in-depth', 'in depth', 'deep dive']
+    }
+    
+    for level, keywords in difficulty_mappings.items():
+        for keyword in keywords:
+            if re.search(rf'\b{re.escape(keyword)}\b', prompt_lower):
+                params['difficulty'] = level
+                break
+        if params['difficulty']:
             break
     
-    # Extract difficulty level
-    difficulty_keywords = ['beginner', 'intermediate', 'advanced']
-    for level in difficulty_keywords:
-        if re.search(rf'\b{level}\b', prompt, re.IGNORECASE):
-            params['difficulty'] = level
-            break
-    
-    # Extract target audience
+    # Extract target audience - much more comprehensive
     audience_patterns = [
-        r'for\s+([^,.\n]+?)\s+(?:students|learners|professionals|people)',
-        r'target audience:\s*([^\n,.]+)',
-        r'audience:\s*([^\n,.]+)',
-        r'aimed at\s+([^\n,.]+)'
+        # Direct patterns
+        r'(?:for|aimed at|targeting|designed for|intended for)\s+([^\n,.;]+?)(?:\s+(?:who|that|with|wanting|interested|looking)|[,.\n]|$)',
+        r'(?:target|target audience|audience)\s*[:\-]\s*([^\n,.;]+?)(?:[,.\n]|$)',
+        # Professional/student indicators
+        r'\b((?:college|university|high school|graduate|undergraduate|phd|doctoral|medical|engineering|business|law|nursing)\s+students?)\b',
+        r'\b((?:software|web|data|machine learning|ai|cloud|mobile|frontend|backend|full stack|fullstack)\s+(?:developers?|engineers?|programmers?))\b',
+        r'\b((?:aspiring|junior|senior|lead|staff|principal)\s+(?:developers?|engineers?|programmers?|professionals?))\b',
+        r'\b((?:beginners?|novices?|experts?|professionals?|practitioners?|enthusiasts?|hobbyists?))\b',
+        r'\b((?:managers?|leaders?|executives?|analysts?|consultants?|researchers?|scientists?))\b',
     ]
     
     for pattern in audience_patterns:
-        match = re.search(pattern, prompt, re.IGNORECASE)
+        match = re.search(pattern, prompt_lower, re.IGNORECASE)
         if match:
-            params['target_audience'] = match.group(1).strip()
-            break
+            audience = match.group(1).strip()
+            # Clean up
+            audience = re.sub(r'^(?:the\s+)?', '', audience)
+            if len(audience) > 3:
+                params['target_audience'] = audience
+                break
     
     # Extract lessons per module
     lessons_patterns = [
-        r'(\d+)\s*lessons?\s+per\s+module',
-        r'lessons per module:\s*(\d+)',
-        r'(\d+)\s*lessons?\s+in\s+each\s+module'
+        r'(\d+)\s*lessons?\s+(?:per|in\s+each|for\s+each)\s+module',
+        r'(?:lessons per module|module lessons)\s*[:\-]?\s*(\d+)',
+        r'each\s+module\s+(?:has|contains|includes)\s+(\d+)\s*lessons?',
+        r'(\d+)\s*lessons?\s+(?:in|per)\s+(?:each|every)\s+module',
     ]
     
     for pattern in lessons_patterns:
-        match = re.search(pattern, prompt, re.IGNORECASE)
+        match = re.search(pattern, prompt_lower, re.IGNORECASE)
         if match:
-            params['lessons_per_module'] = int(match.group(1))
-            break
+            lessons = int(match.group(1))
+            if 1 <= lessons <= 20:  # Sanity check
+                params['lessons_per_module'] = lessons
+                break
     
     # Set defaults for optional parameters
     if params['duration_weeks'] is None:
@@ -212,23 +246,29 @@ with col1:
     st.markdown("""
     **Describe your course requirements in natural language:**
     
-    You can include:
-    - Course topic (required)
-    - Duration in weeks (optional, default: 4 weeks)
-    - Difficulty level: beginner, intermediate, or advanced (optional, default: beginner)
-    - Target audience (optional, default: general learners)
-    - Lessons per module (optional, default: 4)
+    Just write naturally - the system will automatically extract:
+    - Course topic
+    - Duration (mention weeks)
+    - Difficulty level (beginner/intermediate/advanced or synonyms)
+    - Target audience (who it's for)
+    - Lessons per module (optional)
     """)
     
     course_prompt = st.text_area(
         "Course Description",
-        placeholder="""Example:
-Create a course on Python Programming for Beginners.
-Duration: 6 weeks
-Difficulty: beginner
-Target audience: college students
-4 lessons per module""",
-        help="Describe your course requirements in natural language",
+        placeholder="""Examples of natural language input:
+
+"I want to learn Python programming for data science. Make it 8 weeks for complete beginners."
+
+"Create a web development course for college students. Should be intermediate level and last 6 weeks."
+
+"Machine learning training for software engineers. Advanced level, 10 weeks."
+
+"Teach JavaScript fundamentals to aspiring developers over 4 weeks with 5 lessons per module."
+
+"A basic introduction to digital marketing for small business owners, lasting 5 weeks."
+""",
+        help="Just describe what you want in plain English - no special format needed!",
         height=200
     )
     
@@ -279,15 +319,23 @@ Target audience: college students
 with col2:
     st.header("💡 Quick Tips")
     st.info("""
-    **For best results:**
-    - Clearly state the course topic
-    - Mention duration if you have a preference
-    - Specify difficulty level (beginner/intermediate/advanced)
-    - Describe your target audience
-    - Use natural language - be conversational!
+    **Natural Language Examples:**
     
-    **Example:**
-    "Create a 6-week intermediate course on Machine Learning for software developers with 5 lessons per module"
+    ✅ "Teach me React for 6 weeks"
+    
+    ✅ "I need a basic SQL course for beginners lasting 4 weeks"
+    
+    ✅ "Advanced Python for data scientists, 10 weeks"
+    
+    ✅ "Web design training for college students"
+    
+    ✅ "Create a course on cloud computing for professionals"
+    
+    **The system understands:**
+    - Synonyms (basic=beginner, intro=introductory)
+    - Various phrasings ("for X weeks", "lasting X weeks", "X week course")
+    - Different audience descriptions
+    - Natural conversational language
     """)
     
     if st.session_state.course_content:
