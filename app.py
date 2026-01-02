@@ -84,17 +84,26 @@ def extract_course_parameters(prompt):
     missing_fields = []
     prompt_lower = prompt.lower()
     
-    # Extract topic - much more flexible patterns
+    # Extract topic - refined patterns with better ordering
     topic_patterns = [
-        # Direct mentions with keywords
-        r'(?:course|class|training|program|curriculum)\s+(?:on|about|for|in|regarding|covering)\s+([^\n,.;]+?)(?:\s+(?:for|over|duration|difficulty|that|which|with|lasting|taking)|[,.\n]|$)',
-        r'(?:teach|learn|study|master|understand)\s+(?:about\s+)?([^\n,.;]+?)(?:\s+(?:for|over|duration|in|within)|[,.\n]|$)',
-        r'(?:create|generate|build|make|design|develop)\s+(?:a\s+)?(?:course|class|training|program)?\s*(?:on|about|for|in)?\s+([^\n,.;]+?)(?:\s+(?:for|over|duration|difficulty|that|which)|[,.\n]|$)',
-        # Topic label
+        # Pattern 1: "X course/program/training for Y" - capture X before course keyword
+        r'(?:create|generate|build|make|design|develop)\s+(?:a\s+)?([^\s]+(?:\s+[^\s]+)*?)\s+(?:course|class|training|program|curriculum)\s+for',
+        
+        # Pattern 2: "course/program on X" - preposition after course keyword
+        r'(?:course|class|training|program|curriculum)\s+(?:on|about|regarding|covering)\s+([^\n,.;]+?)(?:\s+(?:for|over|duration|difficulty|that|which|with|lasting|taking)|[,.\n]|$)',
+        
+        # Pattern 3: "teach/learn X" - subject after action verb
+        r'(?:teach|learn|study|master|understand)\s+(?:about\s+)?([^\n,.;]+?)(?:\s+(?:for|to|over|duration|in|within)|[,.\n]|$)',
+        
+        # Pattern 4: "create course on X" - with explicit preposition
+        r'(?:create|generate|build|make|design|develop)\s+(?:a\s+)?(?:course|class|training|program)\s+(?:on|about|regarding|in)\s+([^\n,.;]+?)(?:\s+(?:for|over|duration)|[,.\n]|$)',
+        
+        # Pattern 5: Topic label format
         r'topic\s*[:\-]\s*([^\n,.;]+?)(?:\s+(?:for|over|duration)|[,.\n]|$)',
         r'subject\s*[:\-]\s*([^\n,.;]+?)(?:\s+(?:for|over|duration)|[,.\n]|$)',
-        # Simple first sentence extraction
-        r'^(?:i\s+(?:want|need|would like)\s+(?:to\s+)?(?:learn|study|create)\s+)?([^\n,.;]+?)(?:\s+(?:for|in|over|duration|with|that is|which is)|[,.\n]|$)',
+        
+        # Pattern 6: "I want to learn X" - conversational
+        r'(?:i\s+)?(?:want|need|would like)\s+(?:to\s+)?(?:learn|study|create|take)\s+(?:a\s+)?(?:course\s+(?:on|in)\s+)?([^\n,.;]+?)(?:\s+(?:for|course|training)|[,.\n]|$)',
     ]
     
     for pattern in topic_patterns:
@@ -104,6 +113,8 @@ def extract_course_parameters(prompt):
             # Clean up common prefixes/suffixes
             topic = re.sub(r'^(?:a|an|the)\s+', '', topic, flags=re.IGNORECASE)
             topic = re.sub(r'\s+(?:course|class|training|program)$', '', topic, flags=re.IGNORECASE)
+            # Remove audience-related words that might have been captured
+            topic = re.sub(r'\s+(?:for|to|with)\s+.*$', '', topic, flags=re.IGNORECASE)
             if len(topic) > 3:  # Must be meaningful
                 params['topic'] = topic
                 break
@@ -258,15 +269,17 @@ with col1:
         "Course Description",
         placeholder="""Examples of natural language input:
 
+"Create a Data engineering course for college students. Should be intermediate level and last 6 weeks."
+
 "I want to learn Python programming for data science. Make it 8 weeks for complete beginners."
 
-"Create a web development course for college students. Should be intermediate level and last 6 weeks."
+"Build a Web development course for aspiring developers. Intermediate level, 6 weeks."
 
-"Machine learning training for software engineers. Advanced level, 10 weeks."
+"Teach Machine learning to software engineers. Advanced level, 10 weeks."
 
-"Teach JavaScript fundamentals to aspiring developers over 4 weeks with 5 lessons per module."
+"Generate a JavaScript fundamentals course for beginners over 4 weeks with 5 lessons per module."
 
-"A basic introduction to digital marketing for small business owners, lasting 5 weeks."
+"A basic introduction to Digital marketing for small business owners, lasting 5 weeks."
 """,
         help="Just describe what you want in plain English - no special format needed!",
         height=200
