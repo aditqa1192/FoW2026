@@ -12,6 +12,7 @@ import re
 
 from agent import CourseContentAgent, generate_markdown_course, generate_html_course, format_course_summary
 from agent.course_agent_langchain import CourseContentAgentLangChain
+from agent.roadmap_agent import CourseRoadmapAgent, format_roadmap_summary
 
 # Load environment variables
 load_dotenv()
@@ -60,6 +61,8 @@ st.markdown("""
 # Initialize session state
 if 'course_content' not in st.session_state:
     st.session_state.course_content = None
+if 'course_roadmap' not in st.session_state:
+    st.session_state.course_roadmap = None
 if 'generation_in_progress' not in st.session_state:
     st.session_state.generation_in_progress = False
 if 'validation_errors' not in st.session_state:
@@ -416,7 +419,7 @@ if st.session_state.course_content:
     st.divider()
     st.header("💾 Export Options")
     
-    export_col1, export_col2, export_col3 = st.columns(3)
+    export_col1, export_col2, export_col3, export_col4 = st.columns(4)
     
     with export_col1:
         # JSON export
@@ -450,6 +453,135 @@ if st.session_state.course_content:
             mime="text/html",
             use_container_width=True
         )
+    
+    with export_col4:
+        # Generate roadmap button
+        if st.button("🗺️ Generate Roadmap", use_container_width=True, type="secondary"):
+            try:
+                with st.spinner("🗺️ Generating course roadmap..."):
+                    roadmap_agent = CourseRoadmapAgent(api_key=api_key, model=model)
+                    
+                    # Generate roadmap from course modules
+                    roadmap = roadmap_agent.generate_roadmap_from_modules(
+                        course_title=course['title'],
+                        modules=course['modules'],
+                        duration_weeks=course['duration_weeks'],
+                        difficulty=course['difficulty_level'],
+                        hours_per_week=5.0,
+                        start_date=datetime.now().strftime("%Y-%m-%d")
+                    )
+                    
+                    st.session_state.course_roadmap = roadmap_agent.export_to_dict(roadmap)
+                    st.success("✨ Roadmap generated successfully!")
+                    st.rerun()
+                    
+            except Exception as e:
+                st.error(f"❌ Error generating roadmap: {str(e)}")
+                st.exception(e)
+    
+    # Display roadmap if generated
+    if st.session_state.course_roadmap:
+        st.divider()
+        st.header("🗺️ Course Learning Roadmap")
+        
+        roadmap = st.session_state.course_roadmap
+        
+        # Roadmap summary
+        with st.expander("📊 Roadmap Overview", expanded=True):
+            col_r1, col_r2, col_r3, col_r4 = st.columns(4)
+            
+            with col_r1:
+                st.metric("Duration", f"{roadmap['total_duration_weeks']} weeks")
+            with col_r2:
+                st.metric("Total Hours", f"{roadmap['total_estimated_hours']} hrs")
+            with col_r3:
+                st.metric("Modules", roadmap['total_modules'])
+            with col_r4:
+                st.metric("Milestones", len(roadmap['milestones']))
+            
+            if roadmap.get('start_date') and roadmap.get('end_date'):
+                st.info(f"📅 **Timeline:** {roadmap['start_date']} to {roadmap['end_date']}")
+            
+            if roadmap.get('pacing_recommendations'):
+                st.markdown("**💡 Pacing Recommendations:**")
+                st.write(roadmap['pacing_recommendations'])
+        
+        # Weekly schedule
+        with st.expander("📅 Weekly Schedule", expanded=True):
+            for week in roadmap['weekly_schedule']:
+                st.markdown(f"### {week['week_title']}")
+                
+                col_w1, col_w2 = st.columns([2, 1])
+                
+                with col_w1:
+                    if week['topics']:
+                        st.markdown("**Topics:**")
+                        for topic in week['topics']:
+                            st.write(f"• {topic}")
+                    
+                    if week['modules_covered']:
+                        st.markdown("**Modules:**")
+                        for module in week['modules_covered']:
+                            st.write(f"📦 {module}")
+                
+                with col_w2:
+                    st.metric("Estimated Hours", f"{week['estimated_hours']} hrs")
+                    
+                    if week['deliverables']:
+                        st.markdown("**📝 Due:**")
+                        for deliverable in week['deliverables']:
+                            st.write(f"• {deliverable}")
+                
+                if week['milestones']:
+                    st.success(f"🎯 Milestone: {week['milestones'][0]}")
+                
+                st.divider()
+        
+        # Milestones overview
+        if roadmap['milestones']:
+            with st.expander("🎯 Key Milestones"):
+                for milestone in roadmap['milestones']:
+                    milestone_type = milestone['type'].capitalize()
+                    icon = {"quiz": "📝", "project": "🚀", "assignment": "✍️", "checkpoint": "✅"}.get(milestone['type'], "🎯")
+                    
+                    st.markdown(f"**Week {milestone['week']}: {icon} {milestone['title']}**")
+                    st.write(f"_{milestone['description']}_")
+                    st.write("")
+        
+        # Study tips
+        if roadmap.get('study_tips'):
+            with st.expander("💡 Study Tips for Success"):
+                for idx, tip in enumerate(roadmap['study_tips'], 1):
+                    st.write(f"{idx}. {tip}")
+        
+        # Roadmap export
+        st.markdown("### Export Roadmap")
+        roadmap_col1, roadmap_col2 = st.columns(2)
+        
+        with roadmap_col1:
+            roadmap_json = json.dumps(roadmap, indent=2, ensure_ascii=False)
+            st.download_button(
+                label="📄 Download Roadmap (JSON)",
+                data=roadmap_json,
+                file_name=f"roadmap_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                mime="application/json",
+                use_container_width=True
+            )
+        
+        with roadmap_col2:
+            # Create markdown roadmap
+            roadmap_agent = CourseRoadmapAgent(api_key=api_key, model=model)
+            from agent.roadmap_agent import CourseRoadmap
+            roadmap_obj = CourseRoadmap(**roadmap)
+            roadmap_markdown = roadmap_agent.format_roadmap_markdown(roadmap_obj)
+            
+            st.download_button(
+                label="📝 Download Roadmap (Markdown)",
+                data=roadmap_markdown,
+                file_name=f"roadmap_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md",
+                mime="text/markdown",
+                use_container_width=True
+            )
 
 # Footer
 st.divider()
