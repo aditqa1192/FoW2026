@@ -163,6 +163,101 @@ VERIFY: Every field must relate to "{topic}". Return ONLY valid JSON without any
                 content = content[:-3]
             return json.loads(content.strip())
     
+    def generate_course_outline_with_details(self, topic: str, duration_weeks: int = 4, 
+                               difficulty: str = "beginner", 
+                               target_audience: str = "general learners",
+                               custom_learning_outcomes: Optional[List[str]] = None,
+                               detailed_topics: Optional[str] = None) -> Dict:
+        """
+        Generate a high-level course outline using LangChain with optional custom parameters
+        
+        Args:
+            topic: Course topic
+            duration_weeks: Course duration in weeks
+            difficulty: Difficulty level (beginner, intermediate, advanced)
+            target_audience: Target audience description
+            custom_learning_outcomes: Optional list of specific learning outcomes to achieve
+            detailed_topics: Optional detailed description of topics to cover
+            
+        Returns:
+            Course outline dictionary
+        """
+        # Build detailed topic specification
+        topic_details = topic
+        if detailed_topics:
+            topic_details = f"{topic}. Specifically cover: {detailed_topics}"
+        
+        # Build learning outcomes specification
+        outcomes_spec = ""
+        if custom_learning_outcomes:
+            outcomes_spec = f"\n\nREQUIRED LEARNING OUTCOMES (must include these):\n" + "\n".join([f"- {outcome}" for outcome in custom_learning_outcomes])
+        
+        # Create prompt template
+        outline_prompt = PromptTemplate(
+            template="""You are an expert course designer. Create a comprehensive course outline STRICTLY about the specified topic.
+
+CRITICAL INSTRUCTION: The entire course MUST be about "{topic_details}" - do NOT generate content about any other subject. Every module, lesson, and outcome must directly relate to "{topic}".
+
+Course Specifications:
+- Topic: {topic_details}
+- Difficulty Level: {difficulty}
+- Target Audience: {target_audience}
+- Duration: {duration_weeks} weeks
+- Number of Modules: {num_modules}{outcomes_spec}
+
+Generate a JSON object with the following structure:
+{{
+    "title": "[Course title MUST include and be about '{topic}']",
+    "description": "[1-2 sentences describing this course on {topic}]",
+    "prerequisites": ["prerequisite 1 for learning {topic}", "prerequisite 2 for {topic}", "prerequisite 3"],
+    "learning_outcomes": ["learners will be able to [skill 1 in {topic}]", "learners will understand [concept 2 in {topic}]", "learners will apply [technique 3 in {topic}]", "outcome 4 for {topic}", "outcome 5 for {topic}"],
+    "modules": [
+        {{"title": "Module 1: [Specific aspect of {topic}]", "description": "This module covers [specific content about {topic}]"}},
+        {{"title": "Module 2: [Another aspect of {topic}]", "description": "This module covers [more content about {topic}]"}}
+    ]
+}}
+
+VERIFY: Every field must relate to "{topic}". Return ONLY valid JSON without any markdown formatting or code blocks.""",
+            input_variables=["topic", "topic_details", "difficulty", "target_audience", "duration_weeks", "num_modules", "outcomes_spec"]
+        )
+        
+        # Create chain
+        chain = outline_prompt | self.llm | self.json_parser
+        
+        # Execute chain
+        try:
+            result = chain.invoke({
+                "topic": topic,
+                "topic_details": topic_details,
+                "difficulty": difficulty,
+                "target_audience": target_audience,
+                "duration_weeks": duration_weeks,
+                "num_modules": max(4, duration_weeks),
+                "outcomes_spec": outcomes_spec
+            })
+            return result
+        except Exception as e:
+            print(f"Error parsing course outline: {e}")
+            # Fallback to text parsing
+            response = (outline_prompt | self.llm).invoke({
+                "topic": topic,
+                "topic_details": topic_details,
+                "difficulty": difficulty,
+                "target_audience": target_audience,
+                "duration_weeks": duration_weeks,
+                "num_modules": max(4, duration_weeks),
+                "outcomes_spec": outcomes_spec
+            })
+            content = response.content.strip()
+            # Clean up markdown
+            if content.startswith("```json"):
+                content = content[7:]
+            if content.startswith("```"):
+                content = content[3:]
+            if content.endswith("```"):
+                content = content[:-3]
+            return json.loads(content.strip())
+    
     def _generate_lessons_batch(self, module_title: str, course_context: str, 
                                  num_lessons: int, batch_num: int = 1) -> List[Dict]:
         """Generate a batch of lessons using LangChain"""
@@ -260,7 +355,9 @@ VERIFY: All content must relate to "{module_title}". Return ONLY valid JSON arra
     def generate_complete_course(self, topic: str, duration_weeks: int = 4,
                                 difficulty: str = "beginner",
                                 target_audience: str = "general learners",
-                                lessons_per_module: int = 4) -> CourseContent:
+                                lessons_per_module: int = 4,
+                                custom_learning_outcomes: Optional[List[str]] = None,
+                                detailed_topics: Optional[str] = None) -> CourseContent:
         """
         Generate a complete course with all modules and lessons using LangChain
         
@@ -270,12 +367,22 @@ VERIFY: All content must relate to "{module_title}". Return ONLY valid JSON arra
             difficulty: Difficulty level
             target_audience: Target audience
             lessons_per_module: Number of lessons per module
+            custom_learning_outcomes: Optional list of custom learning outcomes
+            detailed_topics: Optional detailed description of specific topics to cover
             
         Returns:
             Complete CourseContent object
         """
         print(f"Generating course outline for: {topic}")
-        outline = self.generate_course_outline(topic, duration_weeks, difficulty, target_audience)
+        if custom_learning_outcomes:
+            print(f"Using {len(custom_learning_outcomes)} custom learning outcomes")
+        if detailed_topics:
+            print(f"Using detailed topics specification")
+            
+        outline = self.generate_course_outline_with_details(
+            topic, duration_weeks, difficulty, target_audience, 
+            custom_learning_outcomes, detailed_topics
+        )
         
         # Verify the generated outline is actually about the requested topic
         generated_title = outline.get("title", "").lower()
@@ -296,7 +403,7 @@ VERIFY: All content must relate to "{module_title}". Return ONLY valid JSON arra
             "difficulty_level": difficulty,
             "duration_weeks": duration_weeks,
             "prerequisites": outline.get("prerequisites", []),
-            "learning_outcomes": outline.get("learning_outcomes", []),
+            "learning_outcomes": custom_learning_outcomes if custom_learning_outcomes else outline.get("learning_outcomes", []),
             "modules": []
         }
         
@@ -311,6 +418,11 @@ VERIFY: All content must relate to "{module_title}". Return ONLY valid JSON arra
             print(f"  Module {idx + 1}/{len(modules)}: {module_title}")
             
             course_context = f"Course: {course_data['title']}. Difficulty: {difficulty}. Audience: {target_audience}"
+            if custom_learning_outcomes:
+                course_context += f". Learning outcomes: {', '.join(custom_learning_outcomes[:3])}"
+            if detailed_topics:
+                course_context += f". Cover topics: {detailed_topics[:200]}"
+                
             lessons_data = self.generate_module_content(module_title, module_desc, course_context, lessons_per_module)
             
             lessons = []

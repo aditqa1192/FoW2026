@@ -75,17 +75,24 @@ if 'generation_in_progress' not in st.session_state:
 if 'validation_errors' not in st.session_state:
     st.session_state.validation_errors = []
 
-def extract_course_parameters(prompt):
+def extract_course_parameters(prompt, learning_outcomes=None, detailed_topics=None):
     """
     Extract course parameters from user prompt using enhanced natural language processing.
     Returns a dictionary with extracted parameters and a list of missing required fields.
+    
+    Args:
+        prompt: Natural language course description
+        learning_outcomes: Optional list of custom learning outcomes
+        detailed_topics: Optional detailed topic description
     """
     params = {
         'topic': None,
         'duration_weeks': None,
         'difficulty': None,
         'target_audience': None,
-        'lessons_per_module': None
+        'lessons_per_module': None,
+        'learning_outcomes': learning_outcomes if learning_outcomes else [],
+        'detailed_topics': detailed_topics
     }
     
     missing_fields = []
@@ -126,22 +133,57 @@ def extract_course_parameters(prompt):
                 params['topic'] = topic
                 break
     
-    # Extract duration - more flexible
-    duration_patterns = [
-        r'(\d+)\s*(?:-|to)?\s*weeks?(?:\s+long)?',
-        r'(?:duration|lasting|takes?|span(?:ning)?|over|in)\s*[:\-]?\s*(\d+)\s*weeks?',
-        r'(?:for|across|throughout)\s+(\d+)\s*weeks?',
-        r'(\d+)\s*week\s+(?:course|program|class)',
-        r'(?:weekly|week by week)\s+(?:for\s+)?(\d+)\s+weeks?',
+    # Extract duration - supports weeks, months, and years
+    # Check for months first (convert to weeks: 1 month = 4 weeks)
+    month_patterns = [
+        r'(\d+)\s*(?:-|to)?\s*months?(?:\s+long)?',
+        r'(?:duration|lasting|takes?|span(?:ning)?|over|in)\s*[:\-]?\s*(\d+)\s*months?',
+        r'(?:for|across|throughout)\s+(\d+)\s*months?',
+        r'(\d+)\s*month\s+(?:course|program|class)',
     ]
     
-    for pattern in duration_patterns:
+    for pattern in month_patterns:
         match = re.search(pattern, prompt_lower, re.IGNORECASE)
         if match:
-            weeks = int(match.group(1))
-            if 1 <= weeks <= 52:  # Sanity check
-                params['duration_weeks'] = weeks
+            months = int(match.group(1))
+            if 1 <= months <= 24:  # Sanity check: 1-24 months
+                params['duration_weeks'] = months * 4  # Convert to weeks
                 break
+    
+    # Check for years (convert to weeks: 1 year = 52 weeks)
+    if params['duration_weeks'] is None:
+        year_patterns = [
+            r'(\d+)\s*(?:-|to)?\s*years?(?:\s+long)?',
+            r'(?:duration|lasting|takes?|span(?:ning)?|over|in)\s*[:\-]?\s*(\d+)\s*years?',
+            r'(?:for|across|throughout)\s+(\d+)\s*years?',
+            r'(\d+)\s*year\s+(?:course|program|class)',
+        ]
+        
+        for pattern in year_patterns:
+            match = re.search(pattern, prompt_lower, re.IGNORECASE)
+            if match:
+                years = int(match.group(1))
+                if 1 <= years <= 5:  # Sanity check: 1-5 years
+                    params['duration_weeks'] = years * 52  # Convert to weeks
+                    break
+    
+    # Check for weeks (if not already found in months/years)
+    if params['duration_weeks'] is None:
+        week_patterns = [
+            r'(\d+)\s*(?:-|to)?\s*weeks?(?:\s+long)?',
+            r'(?:duration|lasting|takes?|span(?:ning)?|over|in)\s*[:\-]?\s*(\d+)\s*weeks?',
+            r'(?:for|across|throughout)\s+(\d+)\s*weeks?',
+            r'(\d+)\s*week\s+(?:course|program|class)',
+            r'(?:weekly|week by week)\s+(?:for\s+)?(\d+)\s+weeks?',
+        ]
+        
+        for pattern in week_patterns:
+            match = re.search(pattern, prompt_lower, re.IGNORECASE)
+            if match:
+                weeks = int(match.group(1))
+                if 1 <= weeks <= 260:  # Sanity check: up to 5 years in weeks
+                    params['duration_weeks'] = weeks
+                    break
     
     # Extract difficulty level - synonyms and variations
     difficulty_mappings = {
@@ -150,20 +192,29 @@ def extract_course_parameters(prompt):
         'advanced': ['advanced', 'expert', 'professional', 'senior', 'high level', 'high-level', 'complex', 'sophisticated', 'in-depth', 'in depth', 'deep dive']
     }
     
+    # Check all levels and pick the highest one found (advanced > intermediate > beginner)
+    difficulty_hierarchy = ['advanced', 'intermediate', 'beginner']
+    found_levels = []
+    
     for level, keywords in difficulty_mappings.items():
         for keyword in keywords:
             if re.search(rf'\b{re.escape(keyword)}\b', prompt_lower):
+                found_levels.append(level)
+                break
+    
+    # Pick the highest difficulty level if multiple found
+    if found_levels:
+        for level in difficulty_hierarchy:
+            if level in found_levels:
                 params['difficulty'] = level
                 break
-        if params['difficulty']:
-            break
     
     # Extract target audience - much more comprehensive
     audience_patterns = [
-        # Direct patterns
-        r'(?:for|aimed at|targeting|designed for|intended for)\s+([^\n,.;]+?)(?:\s+(?:who|that|with|wanting|interested|looking)|[,.\n]|$)',
+        # Direct patterns (checked first - these capture full phrases including 'and' conjunctions)
+        r'(?:for|aimed at|targeting|designed for|intended for)\s+([^\n,.;]+?)(?:\s+(?:who|that|with|wanting|interested|looking)\b|[,.\n]|$)',
         r'(?:target|target audience|audience)\s*[:\-]\s*([^\n,.;]+?)(?:[,.\n]|$)',
-        # Professional/student indicators
+        # Professional/student indicators (checked after direct patterns)
         r'\b((?:college|university|high school|graduate|undergraduate|phd|doctoral|medical|engineering|business|law|nursing)\s+students?)\b',
         r'\b((?:software|web|data|machine learning|ai|cloud|mobile|frontend|backend|full stack|fullstack)\s+(?:developers?|engineers?|programmers?))\b',
         r'\b((?:aspiring|junior|senior|lead|staff|principal)\s+(?:developers?|engineers?|programmers?|professionals?))\b',
@@ -171,15 +222,22 @@ def extract_course_parameters(prompt):
         r'\b((?:managers?|leaders?|executives?|analysts?|consultants?|researchers?|scientists?))\b',
     ]
     
+    # Try to find the longest/most complete match
+    best_match = None
+    best_length = 0
+    
     for pattern in audience_patterns:
         match = re.search(pattern, prompt_lower, re.IGNORECASE)
         if match:
             audience = match.group(1).strip()
             # Clean up
             audience = re.sub(r'^(?:the\s+)?', '', audience)
-            if len(audience) > 3:
-                params['target_audience'] = audience
-                break
+            if len(audience) > best_length and len(audience) > 3:
+                best_match = audience
+                best_length = len(audience)
+    
+    if best_match:
+        params['target_audience'] = best_match
     
     # Extract lessons per module
     lessons_patterns = [
@@ -270,6 +328,8 @@ with col1:
     - Difficulty level (beginner/intermediate/advanced or synonyms)
     - Target audience (who it's for)
     - Lessons per module (optional)
+    
+    **Optional:** Add detailed topics and learning outcomes below for more customization.
     """)
     
     course_prompt = st.text_area(
@@ -292,22 +352,71 @@ with col1:
         height=200
     )
     
+    # Advanced options expander
+    with st.expander("⚙️ Advanced Options (Optional)", expanded=False):
+        st.markdown("**Detailed Topic Description:**")
+        detailed_topics = st.text_area(
+            "Specific topics to cover",
+            placeholder="""Example:
+- Variables and data types
+- Control structures (if/else, loops)
+- Functions and modules
+- Object-oriented programming
+- File handling and exceptions
+- Libraries: NumPy, Pandas""",
+            help="List specific topics or subtopics you want included in the course",
+            height=150,
+            key="detailed_topics"
+        )
+        
+        st.markdown("**Custom Learning Outcomes:**")
+        learning_outcomes_input = st.text_area(
+            "Learning outcomes (one per line)",
+            placeholder="""Example:
+- Write Python programs to solve real-world problems
+- Understand and apply object-oriented programming concepts
+- Work with data using Pandas and NumPy
+- Debug and test Python code effectively
+- Build simple web applications using Flask""",
+            help="Enter desired learning outcomes, one per line. These will guide the course content generation.",
+            height=150,
+            key="learning_outcomes"
+        )
+        
+        # Parse learning outcomes from text area
+        learning_outcomes = []
+        if learning_outcomes_input:
+            learning_outcomes = [line.strip().lstrip('-•*').strip() 
+                               for line in learning_outcomes_input.split('\n') 
+                               if line.strip() and not line.strip().startswith('#')]
+    
     # Validate button
     if st.button("🔍 Validate Requirements", type="secondary"):
         if course_prompt:
-            params, missing = extract_course_parameters(course_prompt)
+            params, missing = extract_course_parameters(
+                course_prompt, 
+                learning_outcomes if learning_outcomes else None,
+                detailed_topics if detailed_topics else None
+            )
             st.session_state.validation_errors = missing
             
             if not missing:
                 st.success("✅ All required parameters detected!")
-                st.markdown(f"""
+                display_text = f"""
                 **Extracted Parameters:**
                 - **Topic:** {params['topic']}
                 - **Duration:** {params['duration_weeks']} weeks
                 - **Difficulty:** {params['difficulty']}
                 - **Target Audience:** {params['target_audience']}
                 - **Lessons per Module:** {params['lessons_per_module']}
-                """)
+                """
+                
+                if params.get('learning_outcomes'):
+                    display_text += f"\n- **Custom Learning Outcomes:** {len(params['learning_outcomes'])} specified"
+                if params.get('detailed_topics'):
+                    display_text += f"\n- **Detailed Topics:** Provided"
+                    
+                st.markdown(display_text)
             else:
                 st.error(f"❌ Missing required information: {', '.join(missing)}")
                 st.warning("Please update your description to include all required details.")
@@ -369,7 +478,11 @@ if generate_button:
         st.error("❌ Please enter course requirements.")
     else:
         # Extract parameters from prompt
-        params, missing = extract_course_parameters(course_prompt)
+        params, missing = extract_course_parameters(
+            course_prompt,
+            learning_outcomes if learning_outcomes else None,
+            detailed_topics if detailed_topics else None
+        )
         st.session_state.validation_errors = missing
         
         if missing:
@@ -380,17 +493,26 @@ if generate_button:
             try:
                 logger.info(f"Starting course generation from UI for topic: {params['topic']}")
                 logger.debug(f"Generation parameters: {params}")
+                
+                # Log custom parameters if provided
+                if params.get('learning_outcomes'):
+                    logger.info(f"Custom learning outcomes provided: {len(params['learning_outcomes'])}")
+                if params.get('detailed_topics'):
+                    logger.info(f"Detailed topics provided")
+                
                 with st.spinner("🤖 Generating course content... This may take a few minutes."):
                     # Initialize LangChain agent
                     agent = CourseContentAgentLangChain(api_key=api_key, model=model)
                     
-                    # Generate course
+                    # Generate course with custom parameters
                     course = agent.generate_complete_course(
                         topic=params['topic'],
                         duration_weeks=params['duration_weeks'],
                         difficulty=params['difficulty'],
                         target_audience=params['target_audience'],
-                        lessons_per_module=params['lessons_per_module']
+                        lessons_per_module=params['lessons_per_module'],
+                        custom_learning_outcomes=params.get('learning_outcomes'),
+                        detailed_topics=params.get('detailed_topics')
                     )
                     
                     # Store in session state
@@ -588,7 +710,9 @@ if st.session_state.course_content:
                         duration_weeks=course['duration_weeks'],
                         difficulty=course['difficulty_level'],
                         hours_per_week=5.0,
-                        start_date=datetime.now().strftime("%Y-%m-%d")
+                        start_date=datetime.now().strftime("%Y-%m-%d"),
+                        custom_learning_outcomes=st.session_state.get('custom_learning_outcomes'),
+                        detailed_topics=st.session_state.get('detailed_topics')
                     )
                     
                     st.session_state.course_roadmap = roadmap_agent.export_to_dict(roadmap)

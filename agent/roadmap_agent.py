@@ -115,7 +115,9 @@ class CourseRoadmapAgent:
     def generate_roadmap_from_modules(self, course_title: str, modules: List[Dict],
                                      duration_weeks: int, difficulty: str = "beginner",
                                      hours_per_week: float = 5.0,
-                                     start_date: Optional[str] = None) -> CourseRoadmap:
+                                     start_date: Optional[str] = None,
+                                     custom_learning_outcomes: Optional[List[str]] = None,
+                                     detailed_topics: Optional[str] = None) -> CourseRoadmap:
         """
         Generate a course roadmap from module information
         
@@ -126,12 +128,18 @@ class CourseRoadmapAgent:
             difficulty: Course difficulty level
             hours_per_week: Expected study hours per week
             start_date: Optional start date (YYYY-MM-DD format)
+            custom_learning_outcomes: Optional list of specific learning outcomes
+            detailed_topics: Optional detailed description of topics to cover
             
         Returns:
             CourseRoadmap object with complete timeline
         """
         logger.info(f"Starting roadmap generation for course: {course_title}")
         logger.debug(f"Parameters: duration_weeks={duration_weeks}, difficulty={difficulty}, hours_per_week={hours_per_week}, modules={len(modules)}")
+        if custom_learning_outcomes:
+            logger.debug(f"Using {len(custom_learning_outcomes)} custom learning outcomes")
+        if detailed_topics:
+            logger.debug(f"Using detailed topics specification")
         
         # Prepare module summary
         module_summary = []
@@ -159,6 +167,15 @@ class CourseRoadmapAgent:
             except:
                 pass
         
+        # Add custom parameters to prompt
+        outcomes_info = ""
+        if custom_learning_outcomes:
+            outcomes_info = "\n\nLearning Outcomes to Achieve:\n" + "\n".join([f"- {outcome}" for outcome in custom_learning_outcomes])
+        
+        topics_info = ""
+        if detailed_topics:
+            topics_info = f"\n\nDetailed Topics to Cover:\n{detailed_topics}"
+        
         roadmap_prompt = PromptTemplate(
             template="""You are an expert learning designer. Create a comprehensive course roadmap and study timeline.
 
@@ -168,7 +185,7 @@ Course Information:
 - Difficulty: {difficulty}
 - Expected Study Time: {hours_per_week} hours per week
 - Total Modules: {total_modules}
-- Total Lessons: {total_lessons}{dates_info}
+- Total Lessons: {total_lessons}{dates_info}{outcomes_info}{topics_info}
 
 Module Breakdown:
 {module_summary}
@@ -228,7 +245,8 @@ CRITICAL REQUIREMENTS:
 
 Return ONLY valid JSON without markdown formatting.""",
             input_variables=["course_title", "duration_weeks", "difficulty", "hours_per_week",
-                           "total_modules", "total_lessons", "dates_info", "module_summary"]
+                           "total_modules", "total_lessons", "dates_info", "outcomes_info", 
+                           "topics_info", "module_summary"]
         )
         
         # Format module summary for prompt
@@ -249,6 +267,8 @@ Return ONLY valid JSON without markdown formatting.""",
                 "total_modules": len(modules),
                 "total_lessons": total_lessons,
                 "dates_info": dates_info,
+                "outcomes_info": outcomes_info,
+                "topics_info": topics_info,
                 "module_summary": module_text
             })
         except Exception as e:
@@ -262,6 +282,8 @@ Return ONLY valid JSON without markdown formatting.""",
                 "total_modules": len(modules),
                 "total_lessons": total_lessons,
                 "dates_info": dates_info,
+                "outcomes_info": outcomes_info,
+                "topics_info": topics_info,
                 "module_summary": module_text
             })
             content = response.content.strip()
