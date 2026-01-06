@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lilaq Course Content Agent</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="main-header">
+            <h1 class="logo">📚 Lilaq Course Content Agent</h1>
+            <p class="subtitle">AI-Powered Course Content Generation</p>
+        </header>
+
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="config-section">
+                <h2>⚙️ Configuration</h2>
+                <div class="config-info">
+                    <p><strong>Current Configuration:</strong></p>
+                    <p>🤖 <strong>Model:</strong> {{ config.model }}</p>
+                    <p>🔑 <strong>API Key:</strong> 
+                        {% if config.api_key_configured %}
+                            <span class="badge success">✅ Configured</span>
+                        {% else %}
+                            <span class="badge error">❌ Not Set</span>
+                        {% endif %}
+                    </p>
+                    <p class="small-text">Configure via .env file</p>
+                </div>
+
+                {% if not config.api_key_configured %}
+                <div class="alert alert-error">
+                    ⚠️ API Key not configured. Please set GOOGLE_API_KEY in .env file.
+                </div>
+                {% endif %}
+            </div>
+
+            <hr>
+
+            <div class="about-section">
+                <h2>📖 About</h2>
+                <p>This agent generates comprehensive course content including:</p>
+                <ul>
+                    <li>Course outline and structure</li>
+                    <li>Detailed modules and lessons</li>
+                    <li>Learning objectives</li>
+                    <li>Activities and assessments</li>
+                    <li>Key takeaways</li>
+                </ul>
+                <p class="small-text">Simply enter a course topic and customize the parameters to get started!</p>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <div class="content-grid">
+                <!-- Input Section -->
+                <div class="input-section">
+                    <h2>🎯 Course Requirements</h2>
+                    
+                    <div class="info-box">
+                        <p><strong>Describe your course requirements in natural language:</strong></p>
+                        <p class="small-text">Just write naturally - the system will automatically extract:</p>
+                        <ul class="small-text">
+                            <li>Course topic</li>
+                            <li>Duration (mention weeks)</li>
+                            <li>Difficulty level (beginner/intermediate/advanced or synonyms)</li>
+                            <li>Target audience (who it's for)</li>
+                            <li>Lessons per module (optional)</li>
+                        </ul>
+                    </div>
+
+                    <textarea 
+                        id="coursePrompt" 
+                        class="course-input" 
+                        placeholder="Examples of natural language input:
+
+'Create a Data engineering course for college students. Should be intermediate level and last 6 weeks.'
+
+'I want to learn Python programming for data science. Make it 8 weeks for complete beginners.'
+
+'Build a Web development course for aspiring developers. Intermediate level, 6 weeks.'
+
+'Teach Machine learning to software engineers. Advanced level, 10 weeks.'
+
+'Generate a JavaScript fundamentals course for beginners over 4 weeks with 5 lessons per module.'
+
+'A basic introduction to Digital marketing for small business owners, lasting 5 weeks.'"
+                        rows="10"></textarea>
+
+                    <div id="validationResult" class="validation-result" style="display: none;"></div>
+
+                    <div class="button-group">
+                        <button id="validateBtn" class="btn btn-secondary">
+                            <i class="fas fa-check"></i> Validate Requirements
+                        </button>
+                        <button id="generateBtn" class="btn btn-primary" {% if not config.api_key_configured %}disabled{% endif %}>
+                            <i class="fas fa-rocket"></i> Generate Course Content
+                        </button>
+                        <button id="clearBtn" class="btn btn-danger">
+                            <i class="fas fa-trash"></i> Clear
+                        </button>
+                    </div>
+
+                    <div id="loadingIndicator" class="loading-indicator" style="display: none;">
+                        <div class="spinner"></div>
+                        <p>🤖 Generating course content... This may take a few minutes.</p>
+                    </div>
+                </div>
+
+                <!-- Tips Section -->
+                <div class="tips-section">
+                    <h2>💡 Quick Tips</h2>
+                    <div class="info-box">
+                        <p><strong>Natural Language Examples:</strong></p>
+                        <ul>
+                            <li>✅ "Teach me React for 6 weeks"</li>
+                            <li>✅ "I need a basic SQL course for beginners lasting 4 weeks"</li>
+                            <li>✅ "Advanced Python for data scientists, 10 weeks"</li>
+                            <li>✅ "Web design training for college students"</li>
+                            <li>✅ "Create a course on cloud computing for professionals"</li>
+                        </ul>
+                        
+                        <p class="small-text"><strong>The system understands:</strong></p>
+                        <ul class="small-text">
+                            <li>Synonyms (basic=beginner, intro=introductory)</li>
+                            <li>Various phrasings ("for X weeks", "lasting X weeks", "X week course")</li>
+                            <li>Different audience descriptions</li>
+                            <li>Natural conversational language</li>
+                        </ul>
+                    </div>
+
+                    <div id="statusIndicator" style="display: none;"></div>
+                </div>
+            </div>
+
+            <!-- Course Content Display -->
+            <div id="courseContent" class="course-content" style="display: none;">
+                <hr class="divider">
+                <h2>📋 Generated Course Content</h2>
+                
+                <!-- Summary -->
+                <div class="expandable-section">
+                    <div class="section-header" onclick="toggleSection('summary')">
+                        <h3>📊 Course Summary</h3>
+                        <i class="fas fa-chevron-down"></i>
+                    </div>
+                    <div id="summary" class="section-content expanded">
+                        <pre id="courseSummary"></pre>
+                    </div>
+                </div>
+
+                <!-- Course Overview -->
+                <div class="expandable-section">
+                    <div class="section-header" onclick="toggleSection('overview')">
+                        <h3>📚 Course Overview</h3>
+                        <i class="fas fa-chevron-down"></i>
+                    </div>
+                    <div id="overview" class="section-content expanded">
+                        <div id="courseOverview"></div>
+                    </div>
+                </div>
+
+                <!-- Modules -->
+                <div id="modulesContainer"></div>
+
+                <!-- Export Options -->
+                <div class="export-section">
+                    <h2>💾 Export Options</h2>
+                    <div class="export-grid">
+                        <button class="btn btn-export" onclick="exportCourse('json')">
+                            <i class="fas fa-file-code"></i> Download as JSON
+                        </button>
+                        <button class="btn btn-export" onclick="exportCourse('markdown')">
+                            <i class="fas fa-file-alt"></i> Download as Markdown
+                        </button>
+                        <button class="btn btn-export" onclick="exportCourse('html')">
+                            <i class="fas fa-globe"></i> Download as HTML
+                        </button>
+                        <button class="btn btn-export" onclick="exportCourse('pdf')">
+                            <i class="fas fa-file-pdf"></i> Generate PDF
+                        </button>
+                        <button class="btn btn-secondary" onclick="generateRoadmap()">
+                            <i class="fas fa-map"></i> Generate Roadmap
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Roadmap Display -->
+                <div id="roadmapContent" class="roadmap-content" style="display: none;">
+                    <hr class="divider">
+                    <h2>🗺️ Course Learning Roadmap</h2>
+                    
+                    <!-- Summary Table -->
+                    <div class="expandable-section">
+                        <div class="section-header" onclick="toggleSection('roadmapSummary')">
+                            <h3>📊 Weekly Schedule Summary</h3>
+                            <i class="fas fa-chevron-down"></i>
+                        </div>
+                        <div id="roadmapSummary" class="section-content expanded">
+                            <div id="roadmapTable"></div>
+                        </div>
+                    </div>
+
+                    <!-- Roadmap Details -->
+                    <div id="roadmapDetails"></div>
+
+                    <!-- Roadmap Export -->
+                    <div class="export-section">
+                        <h3>📥 Export Roadmap</h3>
+                        <div class="export-grid">
+                            <button class="btn btn-export" onclick="exportRoadmap('json')">
+                                <i class="fas fa-file-code"></i> Download JSON
+                            </button>
+                            <button class="btn btn-export" onclick="exportRoadmap('markdown')">
+                                <i class="fas fa-file-alt"></i> Download Markdown
+                            </button>
+                            <button class="btn btn-export" onclick="exportRoadmap('pdf')">
+                                <i class="fas fa-file-pdf"></i> Generate PDF
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <p>Lilaq Course Content Agent | Powered by Google Gemini</p>
+    </footer>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
