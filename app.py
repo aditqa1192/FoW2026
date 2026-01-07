@@ -1,22 +1,32 @@
 """
-OKIR Course Content Agent - Streamlit UI
+Lilaq Course Content Agent - Streamlit UI
 Interactive web interface for generating course content
 """
 
 import streamlit as st
 import os
+import logging
 from dotenv import load_dotenv
 import json
 from datetime import datetime
+import re
 
 from agent import CourseContentAgent, generate_markdown_course, generate_html_course, format_course_summary
+from agent.course_agent_langchain import CourseContentAgentLangChain
+from agent.roadmap_agent import CourseRoadmapAgent, format_roadmap_summary
+from utils.logger_config import setup_logging
 
 # Load environment variables
 load_dotenv()
 
+# Setup logging
+setup_logging(log_dir="logs", log_level=logging.DEBUG)
+logger = logging.getLogger(__name__)
+logger.info("Starting Lilaq Course Content Agent application")
+
 # Page configuration
 st.set_page_config(
-    page_title="OKIR Course Content Agent",
+    page_title="Lilaq Course Content Agent",
     page_icon="📚",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -58,32 +68,235 @@ st.markdown("""
 # Initialize session state
 if 'course_content' not in st.session_state:
     st.session_state.course_content = None
+if 'course_roadmap' not in st.session_state:
+    st.session_state.course_roadmap = None
 if 'generation_in_progress' not in st.session_state:
     st.session_state.generation_in_progress = False
+if 'validation_errors' not in st.session_state:
+    st.session_state.validation_errors = []
+
+def extract_course_parameters(prompt, learning_outcomes=None, detailed_topics=None):
+    """
+    Extract course parameters from user prompt using enhanced natural language processing.
+    Returns a dictionary with extracted parameters and a list of missing required fields.
+    
+    Args:
+        prompt: Natural language course description
+        learning_outcomes: Optional list of custom learning outcomes
+        detailed_topics: Optional detailed topic description
+    """
+    params = {
+        'topic': None,
+        'duration_weeks': None,
+        'difficulty': None,
+        'target_audience': None,
+        'lessons_per_module': None,
+        'learning_outcomes': learning_outcomes if learning_outcomes else [],
+        'detailed_topics': detailed_topics
+    }
+    
+    missing_fields = []
+    prompt_lower = prompt.lower()
+    
+    # Extract topic - refined patterns with better ordering
+    topic_patterns = [
+        # Pattern 1: "X course/program/training for Y" - capture X before course keyword
+        r'(?:create|generate|build|make|design|develop)\s+(?:a\s+)?([^\s]+(?:\s+[^\s]+)*?)\s+(?:course|class|training|program|curriculum)\s+for',
+        
+        # Pattern 2: "course/program on X" - preposition after course keyword
+        r'(?:course|class|training|program|curriculum)\s+(?:on|about|regarding|covering)\s+([^\n,.;]+?)(?:\s+(?:for|over|duration|difficulty|that|which|with|lasting|taking)|[,.\n]|$)',
+        
+        # Pattern 3: "teach/learn X" - subject after action verb
+        r'(?:teach|learn|study|master|understand)\s+(?:about\s+)?([^\n,.;]+?)(?:\s+(?:for|to|over|duration|in|within)|[,.\n]|$)',
+        
+        # Pattern 4: "create course on X" - with explicit preposition
+        r'(?:create|generate|build|make|design|develop)\s+(?:a\s+)?(?:course|class|training|program)\s+(?:on|about|regarding|in)\s+([^\n,.;]+?)(?:\s+(?:for|over|duration)|[,.\n]|$)',
+        
+        # Pattern 5: Topic label format
+        r'topic\s*[:\-]\s*([^\n,.;]+?)(?:\s+(?:for|over|duration)|[,.\n]|$)',
+        r'subject\s*[:\-]\s*([^\n,.;]+?)(?:\s+(?:for|over|duration)|[,.\n]|$)',
+        
+        # Pattern 6: "I want to learn X" - conversational
+        r'(?:i\s+)?(?:want|need|would like)\s+(?:to\s+)?(?:learn|study|create|take)\s+(?:a\s+)?(?:course\s+(?:on|in)\s+)?([^\n,.;]+?)(?:\s+(?:for|course|training)|[,.\n]|$)',
+    ]
+    
+    for pattern in topic_patterns:
+        match = re.search(pattern, prompt_lower, re.IGNORECASE)
+        if match:
+            topic = match.group(1).strip()
+            # Clean up common prefixes/suffixes
+            topic = re.sub(r'^(?:a|an|the)\s+', '', topic, flags=re.IGNORECASE)
+            topic = re.sub(r'\s+(?:course|class|training|program)$', '', topic, flags=re.IGNORECASE)
+            # Remove audience-related words that might have been captured
+            topic = re.sub(r'\s+(?:for|to|with)\s+.*$', '', topic, flags=re.IGNORECASE)
+            if len(topic) > 3:  # Must be meaningful
+                params['topic'] = topic
+                break
+    
+    # Extract duration - supports weeks, months, and years
+    # Check for months first (convert to weeks: 1 month = 4 weeks)
+    month_patterns = [
+        r'(\d+)\s*(?:-|to)?\s*months?(?:\s+long)?',
+        r'(?:duration|lasting|takes?|span(?:ning)?|over|in)\s*[:\-]?\s*(\d+)\s*months?',
+        r'(?:for|across|throughout)\s+(\d+)\s*months?',
+        r'(\d+)\s*month\s+(?:course|program|class)',
+    ]
+    
+    for pattern in month_patterns:
+        match = re.search(pattern, prompt_lower, re.IGNORECASE)
+        if match:
+            months = int(match.group(1))
+            if 1 <= months <= 24:  # Sanity check: 1-24 months
+                params['duration_weeks'] = months * 4  # Convert to weeks
+                break
+    
+    # Check for years (convert to weeks: 1 year = 52 weeks)
+    if params['duration_weeks'] is None:
+        year_patterns = [
+            r'(\d+)\s*(?:-|to)?\s*years?(?:\s+long)?',
+            r'(?:duration|lasting|takes?|span(?:ning)?|over|in)\s*[:\-]?\s*(\d+)\s*years?',
+            r'(?:for|across|throughout)\s+(\d+)\s*years?',
+            r'(\d+)\s*year\s+(?:course|program|class)',
+        ]
+        
+        for pattern in year_patterns:
+            match = re.search(pattern, prompt_lower, re.IGNORECASE)
+            if match:
+                years = int(match.group(1))
+                if 1 <= years <= 5:  # Sanity check: 1-5 years
+                    params['duration_weeks'] = years * 52  # Convert to weeks
+                    break
+    
+    # Check for weeks (if not already found in months/years)
+    if params['duration_weeks'] is None:
+        week_patterns = [
+            r'(\d+)\s*(?:-|to)?\s*weeks?(?:\s+long)?',
+            r'(?:duration|lasting|takes?|span(?:ning)?|over|in)\s*[:\-]?\s*(\d+)\s*weeks?',
+            r'(?:for|across|throughout)\s+(\d+)\s*weeks?',
+            r'(\d+)\s*week\s+(?:course|program|class)',
+            r'(?:weekly|week by week)\s+(?:for\s+)?(\d+)\s+weeks?',
+        ]
+        
+        for pattern in week_patterns:
+            match = re.search(pattern, prompt_lower, re.IGNORECASE)
+            if match:
+                weeks = int(match.group(1))
+                if 1 <= weeks <= 260:  # Sanity check: up to 5 years in weeks
+                    params['duration_weeks'] = weeks
+                    break
+    
+    # Extract difficulty level - synonyms and variations
+    difficulty_mappings = {
+        'beginner': ['beginner', 'beginners', 'basic', 'introductory', 'intro', 'fundamental', 'elementary', 'starter', 'novice', 'entry level', 'entry-level', 'starting'],
+        'intermediate': ['intermediate', 'mid level', 'mid-level', 'moderate', 'standard', 'regular', 'average'],
+        'advanced': ['advanced', 'expert', 'professional', 'senior', 'high level', 'high-level', 'complex', 'sophisticated', 'in-depth', 'in depth', 'deep dive']
+    }
+    
+    # Check all levels and pick the highest one found (advanced > intermediate > beginner)
+    difficulty_hierarchy = ['advanced', 'intermediate', 'beginner']
+    found_levels = []
+    
+    for level, keywords in difficulty_mappings.items():
+        for keyword in keywords:
+            if re.search(rf'\b{re.escape(keyword)}\b', prompt_lower):
+                found_levels.append(level)
+                break
+    
+    # Pick the highest difficulty level if multiple found
+    if found_levels:
+        for level in difficulty_hierarchy:
+            if level in found_levels:
+                params['difficulty'] = level
+                break
+    
+    # Extract target audience - much more comprehensive
+    audience_patterns = [
+        # Direct patterns (checked first - these capture full phrases including 'and' conjunctions)
+        r'(?:for|aimed at|targeting|designed for|intended for)\s+([^\n,.;]+?)(?:\s+(?:who|that|with|wanting|interested|looking)\b|[,.\n]|$)',
+        r'(?:target|target audience|audience)\s*[:\-]\s*([^\n,.;]+?)(?:[,.\n]|$)',
+        # Professional/student indicators (checked after direct patterns)
+        r'\b((?:college|university|high school|graduate|undergraduate|phd|doctoral|medical|engineering|business|law|nursing)\s+students?)\b',
+        r'\b((?:software|web|data|machine learning|ai|cloud|mobile|frontend|backend|full stack|fullstack)\s+(?:developers?|engineers?|programmers?))\b',
+        r'\b((?:aspiring|junior|senior|lead|staff|principal)\s+(?:developers?|engineers?|programmers?|professionals?))\b',
+        r'\b((?:beginners?|novices?|experts?|professionals?|practitioners?|enthusiasts?|hobbyists?))\b',
+        r'\b((?:managers?|leaders?|executives?|analysts?|consultants?|researchers?|scientists?))\b',
+    ]
+    
+    # Try to find the longest/most complete match
+    best_match = None
+    best_length = 0
+    
+    for pattern in audience_patterns:
+        match = re.search(pattern, prompt_lower, re.IGNORECASE)
+        if match:
+            audience = match.group(1).strip()
+            # Clean up
+            audience = re.sub(r'^(?:the\s+)?', '', audience)
+            if len(audience) > best_length and len(audience) > 3:
+                best_match = audience
+                best_length = len(audience)
+    
+    if best_match:
+        params['target_audience'] = best_match
+    
+    # Extract lessons per module
+    lessons_patterns = [
+        r'(\d+)\s*lessons?\s+(?:per|in\s+each|for\s+each)\s+module',
+        r'(?:lessons per module|module lessons)\s*[:\-]?\s*(\d+)',
+        r'each\s+module\s+(?:has|contains|includes)\s+(\d+)\s*lessons?',
+        r'(\d+)\s*lessons?\s+(?:in|per)\s+(?:each|every)\s+module',
+    ]
+    
+    for pattern in lessons_patterns:
+        match = re.search(pattern, prompt_lower, re.IGNORECASE)
+        if match:
+            lessons = int(match.group(1))
+            if 1 <= lessons <= 20:  # Sanity check
+                params['lessons_per_module'] = lessons
+                break
+    
+    # Set defaults for optional parameters
+    if params['duration_weeks'] is None:
+        params['duration_weeks'] = 4
+        
+    if params['difficulty'] is None:
+        params['difficulty'] = 'beginner'
+        
+    if params['target_audience'] is None:
+        params['target_audience'] = 'general learners'
+        
+    if params['lessons_per_module'] is None:
+        params['lessons_per_module'] = 4
+    
+    # Check for required fields
+    if not params['topic']:
+        missing_fields.append('Course Topic')
+    
+    return params, missing_fields
 
 # Header
-st.markdown('<div class="main-header">📚 OKIR Course Content Agent</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header">📚 Lilaq Course Content Agent</div>', unsafe_allow_html=True)
 st.markdown('<div class="sub-header">AI-Powered Course Content Generation</div>', unsafe_allow_html=True)
 
 # Sidebar - Configuration
 with st.sidebar:
     st.header("⚙️ Configuration")
     
-    # API Key input
-    api_key = st.text_input(
-        "Google API Key",
-        type="password",
-        value=os.getenv("GOOGLE_API_KEY", ""),
-        help="Enter your Google API key. You can get one at https://makersuite.google.com/app/apikey"
-    )
+    # Read API key and model from environment variables
+    api_key = os.getenv("GOOGLE_API_KEY", "")
+    model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
     
-    # Model selection
-    model = st.selectbox(
-        "AI Model",
-        ["gemini-2.0-flash-exp", "gemini-2.5-flash", "gemini-1.5-pro", "gemini-1.5-flash", "gemma-3-12b"],
-        index=0,
-        help="Select the Gemini model to use for generation"
-    )
+    # Display current configuration (read-only)
+    st.info(f"""**Current Configuration:**
+    
+🤖 **Model:** {model}
+🔑 **API Key:** {"✅ Configured" if api_key else "❌ Not Set"}
+
+*Configure via .env file*
+    """)
+    
+    if not api_key:
+        st.error("⚠️ API Key not configured. Please set GOOGLE_API_KEY in .env file.")
     
     st.divider()
     
@@ -103,51 +316,118 @@ with st.sidebar:
 col1, col2 = st.columns([2, 1])
 
 with col1:
-    st.header("🎯 Course Parameters")
+    st.header("🎯 Course Requirements")
     
-    # Course topic
-    course_topic = st.text_input(
-        "Course Topic",
-        placeholder="e.g., Python Programming for Beginners, Digital Marketing Fundamentals",
-        help="Enter the main topic or subject of the course"
+    # Prompt-based input
+    st.markdown("""
+    **Describe your course requirements in natural language:**
+    
+    Just write naturally - the system will automatically extract:
+    - Course topic
+    - Duration (mention weeks)
+    - Difficulty level (beginner/intermediate/advanced or synonyms)
+    - Target audience (who it's for)
+    - Lessons per module (optional)
+    
+    **Optional:** Add detailed topics and learning outcomes below for more customization.
+    """)
+    
+    course_prompt = st.text_area(
+        "Course Description",
+        placeholder="""Examples of natural language input:
+
+"Create a Data engineering course for college students. Should be intermediate level and last 6 weeks."
+
+"I want to learn Python programming for data science. Make it 8 weeks for complete beginners."
+
+"Build a Web development course for aspiring developers. Intermediate level, 6 weeks."
+
+"Teach Machine learning to software engineers. Advanced level, 10 weeks."
+
+"Generate a JavaScript fundamentals course for beginners over 4 weeks with 5 lessons per module."
+
+"A basic introduction to Digital marketing for small business owners, lasting 5 weeks."
+""",
+        help="Just describe what you want in plain English - no special format needed!",
+        height=200
     )
     
-    # Additional parameters
-    col_a, col_b = st.columns(2)
-    
-    with col_a:
-        duration_weeks = st.slider(
-            "Duration (weeks)",
-            min_value=1,
-            max_value=16,
-            value=4,
-            help="How many weeks should the course run?"
+    # Advanced options expander
+    with st.expander("⚙️ Advanced Options (Optional)", expanded=False):
+        st.markdown("**Detailed Topic Description:**")
+        detailed_topics = st.text_area(
+            "Specific topics to cover",
+            placeholder="""Example:
+- Variables and data types
+- Control structures (if/else, loops)
+- Functions and modules
+- Object-oriented programming
+- File handling and exceptions
+- Libraries: NumPy, Pandas""",
+            help="List specific topics or subtopics you want included in the course",
+            height=150,
+            key="detailed_topics"
         )
         
-        difficulty = st.selectbox(
-            "Difficulty Level",
-            ["beginner", "intermediate", "advanced"],
-            index=0,
-            help="Target difficulty level for the course"
-        )
-    
-    with col_b:
-        target_audience = st.text_input(
-            "Target Audience",
-            value="general learners",
-            placeholder="e.g., college students, professionals, hobbyists",
-            help="Who is this course designed for?"
+        st.markdown("**Custom Learning Outcomes:**")
+        learning_outcomes_input = st.text_area(
+            "Learning outcomes (one per line)",
+            placeholder="""Example:
+- Write Python programs to solve real-world problems
+- Understand and apply object-oriented programming concepts
+- Work with data using Pandas and NumPy
+- Debug and test Python code effectively
+- Build simple web applications using Flask""",
+            help="Enter desired learning outcomes, one per line. These will guide the course content generation.",
+            height=150,
+            key="learning_outcomes"
         )
         
-        lessons_per_module = st.slider(
-            "Lessons per Module",
-            min_value=2,
-            max_value=8,
-            value=4,
-            help="Number of lessons in each module"
-        )
+        # Parse learning outcomes from text area
+        learning_outcomes = []
+        if learning_outcomes_input:
+            learning_outcomes = [line.strip().lstrip('-•*').strip() 
+                               for line in learning_outcomes_input.split('\n') 
+                               if line.strip() and not line.strip().startswith('#')]
+    
+    # Validate button
+    if st.button("🔍 Validate Requirements", type="secondary"):
+        if course_prompt:
+            params, missing = extract_course_parameters(
+                course_prompt, 
+                learning_outcomes if learning_outcomes else None,
+                detailed_topics if detailed_topics else None
+            )
+            st.session_state.validation_errors = missing
+            
+            if not missing:
+                st.success("✅ All required parameters detected!")
+                display_text = f"""
+                **Extracted Parameters:**
+                - **Topic:** {params['topic']}
+                - **Duration:** {params['duration_weeks']} weeks
+                - **Difficulty:** {params['difficulty']}
+                - **Target Audience:** {params['target_audience']}
+                - **Lessons per Module:** {params['lessons_per_module']}
+                """
+                
+                if params.get('learning_outcomes'):
+                    display_text += f"\n- **Custom Learning Outcomes:** {len(params['learning_outcomes'])} specified"
+                if params.get('detailed_topics'):
+                    display_text += f"\n- **Detailed Topics:** Provided"
+                    
+                st.markdown(display_text)
+            else:
+                st.error(f"❌ Missing required information: {', '.join(missing)}")
+                st.warning("Please update your description to include all required details.")
+        else:
+            st.warning("⚠️ Please enter course requirements first.")
     
     st.divider()
+    
+    # Display validation errors if any
+    if st.session_state.validation_errors:
+        st.error(f"⚠️ Missing required information: {', '.join(st.session_state.validation_errors)}")
     
     # Generate button
     generate_col, clear_col = st.columns([3, 1])
@@ -157,7 +437,7 @@ with col1:
             "🚀 Generate Course Content",
             type="primary",
             use_container_width=True,
-            disabled=not course_topic or not api_key
+            disabled=not course_prompt or not api_key
         )
     
     with clear_col:
@@ -168,11 +448,23 @@ with col1:
 with col2:
     st.header("💡 Quick Tips")
     st.info("""
-    **For best results:**
-    - Be specific with course topics
-    - Adjust duration based on content depth
-    - Match difficulty to audience
-    - Review and customize generated content
+    **Natural Language Examples:**
+    
+    ✅ "Teach me React for 6 weeks"
+    
+    ✅ "I need a basic SQL course for beginners lasting 4 weeks"
+    
+    ✅ "Advanced Python for data scientists, 10 weeks"
+    
+    ✅ "Web design training for college students"
+    
+    ✅ "Create a course on cloud computing for professionals"
+    
+    **The system understands:**
+    - Synonyms (basic=beginner, intro=introductory)
+    - Various phrasings ("for X weeks", "lasting X weeks", "X week course")
+    - Different audience descriptions
+    - Natural conversational language
     """)
     
     if st.session_state.course_content:
@@ -182,32 +474,59 @@ with col2:
 if generate_button:
     if not api_key:
         st.error("❌ Please provide a Google API key in the sidebar.")
-    elif not course_topic:
-        st.error("❌ Please enter a course topic.")
+    elif not course_prompt:
+        st.error("❌ Please enter course requirements.")
     else:
-        try:
-            with st.spinner("🤖 Generating course content... This may take a few minutes."):
-                # Initialize agent
-                agent = CourseContentAgent(api_key=api_key, model=model)
+        # Extract parameters from prompt
+        params, missing = extract_course_parameters(
+            course_prompt,
+            learning_outcomes if learning_outcomes else None,
+            detailed_topics if detailed_topics else None
+        )
+        st.session_state.validation_errors = missing
+        
+        if missing:
+            st.error(f"❌ Missing required information: {', '.join(missing)}")
+            st.warning("Please update your course description to include all required details and try again.")
+            logger.warning(f"Course generation failed - missing parameters: {missing}")
+        else:
+            try:
+                logger.info(f"Starting course generation from UI for topic: {params['topic']}")
+                logger.debug(f"Generation parameters: {params}")
                 
-                # Generate course
-                course = agent.generate_complete_course(
-                    topic=course_topic,
-                    duration_weeks=duration_weeks,
-                    difficulty=difficulty,
-                    target_audience=target_audience,
-                    lessons_per_module=lessons_per_module
-                )
+                # Log custom parameters if provided
+                if params.get('learning_outcomes'):
+                    logger.info(f"Custom learning outcomes provided: {len(params['learning_outcomes'])}")
+                if params.get('detailed_topics'):
+                    logger.info(f"Detailed topics provided")
                 
-                # Store in session state
-                st.session_state.course_content = agent.export_to_dict(course)
-                
-                st.success("✨ Course content generated successfully!")
-                st.rerun()
-                
-        except Exception as e:
-            st.error(f"❌ Error generating course: {str(e)}")
-            st.exception(e)
+                with st.spinner("🤖 Generating course content... This may take a few minutes."):
+                    # Initialize LangChain agent
+                    agent = CourseContentAgentLangChain(api_key=api_key, model=model)
+                    
+                    # Generate course with custom parameters
+                    course = agent.generate_complete_course(
+                        topic=params['topic'],
+                        duration_weeks=params['duration_weeks'],
+                        difficulty=params['difficulty'],
+                        target_audience=params['target_audience'],
+                        lessons_per_module=params['lessons_per_module'],
+                        custom_learning_outcomes=params.get('learning_outcomes'),
+                        detailed_topics=params.get('detailed_topics')
+                    )
+                    
+                    # Store in session state
+                    st.session_state.course_content = agent.export_to_dict(course)
+                    st.session_state.validation_errors = []
+                    
+                    logger.info("Course content generated successfully from UI")
+                    st.success("✨ Course content generated successfully!")
+                    st.rerun()
+                    
+            except Exception as e:
+                logger.error(f"Error generating course from UI: {str(e)}", exc_info=True)
+                st.error(f"❌ Error generating course: {str(e)}")
+                st.exception(e)
 
 # Display generated content
 if st.session_state.course_content:
@@ -329,11 +648,247 @@ if st.session_state.course_content:
             mime="text/html",
             use_container_width=True
         )
+    
+    # Second row with PDF and Roadmap buttons
+    st.write("")  # Small spacing
+    export_col4, export_col5 = st.columns(2)
+    
+    with export_col4:
+        # PDF export button
+        if st.button("📄 Generate PDF", use_container_width=True, key="course_pdf_export"):
+            try:
+                logger.info(f"Generating course PDF for: {course['title']}")
+                with st.spinner("📄 Generating PDF..."):
+                    import tempfile
+                    from agent.content_generator import export_course_to_pdf
+                    
+                    # Create temp file
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
+                        pdf_path = tmp_file.name
+                    
+                    # Generate PDF
+                    export_course_to_pdf(course, pdf_path)
+                    logger.debug(f"Course PDF generated at temporary path: {pdf_path}")
+                    
+                    # Read PDF file
+                    with open(pdf_path, 'rb') as f:
+                        pdf_data = f.read()
+                    
+                    # Clean up temp file
+                    import os
+                    os.unlink(pdf_path)
+                    logger.info("Course PDF generated successfully")
+                    
+                    # Offer download
+                    st.download_button(
+                        label="⬇️ Download Course PDF",
+                        data=pdf_data,
+                        file_name=f"course_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                        mime="application/pdf",
+                        use_container_width=True
+                    )
+                    st.success("✅ Course PDF generated successfully!")
+                    
+            except ImportError:
+                st.error("❌ PDF generation requires additional libraries. Install: pip install xhtml2pdf")
+            except Exception as e:
+                logger.error(f"Error generating course PDF: {str(e)}", exc_info=True)
+                st.error(f"❌ Error generating PDF: {str(e)}")
+    
+    with export_col5:
+        # Generate roadmap button
+        if st.button("🗺️ Generate Roadmap", use_container_width=True, type="secondary"):
+            try:
+                logger.info(f"Starting roadmap generation from UI for course: {course['title']}")
+                with st.spinner("🗺️ Generating course roadmap..."):
+                    roadmap_agent = CourseRoadmapAgent(api_key=api_key, model=model)
+                    
+                    # Generate roadmap from course modules
+                    roadmap = roadmap_agent.generate_roadmap_from_modules(
+                        course_title=course['title'],
+                        modules=course['modules'],
+                        duration_weeks=course['duration_weeks'],
+                        difficulty=course['difficulty_level'],
+                        hours_per_week=5.0,
+                        start_date=datetime.now().strftime("%Y-%m-%d"),
+                        custom_learning_outcomes=st.session_state.get('custom_learning_outcomes'),
+                        detailed_topics=st.session_state.get('detailed_topics')
+                    )
+                    
+                    st.session_state.course_roadmap = roadmap_agent.export_to_dict(roadmap)
+                    logger.info("Roadmap generated successfully from UI")
+                    st.success("✨ Roadmap generated successfully!")
+                    st.rerun()
+                    
+            except Exception as e:
+                logger.error(f"Error generating roadmap from UI: {str(e)}", exc_info=True)
+                st.error(f"❌ Error generating roadmap: {str(e)}")
+                st.exception(e)
+    
+    # Display roadmap if generated
+    if st.session_state.course_roadmap:
+        st.divider()
+        st.header("🗺️ Course Learning Roadmap")
+        
+        roadmap = st.session_state.course_roadmap
+        
+        # Summary Table - First Output
+        st.subheader("📊 Weekly Schedule Summary")
+        
+        # Create roadmap object for table generation
+        roadmap_agent = CourseRoadmapAgent(api_key=api_key, model=model)
+        from agent.roadmap_agent import CourseRoadmap
+        roadmap_obj = CourseRoadmap(**roadmap)
+        
+        # Display summary table
+        summary_table = roadmap_agent.generate_summary_table(roadmap_obj)
+        st.markdown(summary_table)
+        
+        st.markdown("---")
+        
+        # Roadmap overview
+        with st.expander("📊 Roadmap Overview", expanded=False):
+            col_r1, col_r2, col_r3, col_r4 = st.columns(4)
+            
+            with col_r1:
+                st.metric("Duration", f"{roadmap['total_duration_weeks']} weeks")
+            with col_r2:
+                st.metric("Total Hours", f"{roadmap['total_estimated_hours']} hrs")
+            with col_r3:
+                st.metric("Modules", roadmap['total_modules'])
+            with col_r4:
+                st.metric("Milestones", len(roadmap['milestones']))
+            
+            if roadmap.get('start_date') and roadmap.get('end_date'):
+                st.info(f"📅 **Timeline:** {roadmap['start_date']} to {roadmap['end_date']}")
+            
+            if roadmap.get('pacing_recommendations'):
+                st.markdown("**💡 Pacing Recommendations:**")
+                st.write(roadmap['pacing_recommendations'])
+        
+        # Weekly schedule
+        with st.expander("📅 Weekly Schedule Details", expanded=False):
+            for week in roadmap['weekly_schedule']:
+                st.markdown(f"### {week['week_title']}")
+                
+                col_w1, col_w2 = st.columns([2, 1])
+                
+                with col_w1:
+                    if week['topics']:
+                        st.markdown("**Topics:**")
+                        for topic in week['topics']:
+                            st.write(f"• {topic}")
+                    
+                    if week['modules_covered']:
+                        st.markdown("**Modules:**")
+                        for module in week['modules_covered']:
+                            st.write(f"📦 {module}")
+                
+                with col_w2:
+                    st.metric("Estimated Hours", f"{week['estimated_hours']} hrs")
+                    
+                    if week['deliverables']:
+                        st.markdown("**📝 Due:**")
+                        for deliverable in week['deliverables']:
+                            st.write(f"• {deliverable}")
+                
+                if week['milestones']:
+                    st.success(f"🎯 Milestone: {week['milestones'][0]}")
+                
+                st.divider()
+        
+        # Milestones overview
+        if roadmap['milestones']:
+            with st.expander("🎯 Key Milestones"):
+                for milestone in roadmap['milestones']:
+                    milestone_type = milestone['type'].capitalize()
+                    icon = {"quiz": "📝", "project": "🚀", "assignment": "✍️", "checkpoint": "✅"}.get(milestone['type'], "🎯")
+                    
+                    st.markdown(f"**Week {milestone['week']}: {icon} {milestone['title']}**")
+                    st.write(f"_{milestone['description']}_")
+                    st.write("")
+        
+        # Study tips
+        if roadmap.get('study_tips'):
+            with st.expander("💡 Study Tips for Success"):
+                for idx, tip in enumerate(roadmap['study_tips'], 1):
+                    st.write(f"{idx}. {tip}")
+        
+        # Roadmap export - Second Output (PDF with complete details)
+        st.markdown("### 📥 Export Roadmap")
+        roadmap_col1, roadmap_col2, roadmap_col3 = st.columns(3)
+        
+        with roadmap_col1:
+            roadmap_json = json.dumps(roadmap, indent=2, ensure_ascii=False)
+            st.download_button(
+                label="📄 Download JSON",
+                data=roadmap_json,
+                file_name=f"roadmap_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                mime="application/json",
+                use_container_width=True
+            )
+        
+        with roadmap_col2:
+            # Create markdown roadmap
+            roadmap_agent = CourseRoadmapAgent(api_key=api_key, model=model)
+            from agent.roadmap_agent import CourseRoadmap
+            roadmap_obj = CourseRoadmap(**roadmap)
+            roadmap_markdown = roadmap_agent.format_roadmap_markdown(roadmap_obj)
+            
+            st.download_button(
+                label="📝 Download Markdown",
+                data=roadmap_markdown,
+                file_name=f"roadmap_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md",
+                mime="text/markdown",
+                use_container_width=True
+            )
+        
+        with roadmap_col3:
+            # PDF export button
+            if st.button("📄 Generate PDF", use_container_width=True, key="pdf_export"):
+                try:
+                    logger.info(f"Generating roadmap PDF for: {roadmap['course_title']}")
+                    with st.spinner("📄 Generating PDF..."):
+                        import tempfile
+                        
+                        # Create temp file
+                        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
+                            pdf_path = tmp_file.name
+                        
+                        # Generate PDF
+                        roadmap_agent.export_to_pdf(roadmap_obj, pdf_path)
+                        logger.debug(f"Roadmap PDF generated at temporary path: {pdf_path}")
+                        
+                        # Read PDF file
+                        with open(pdf_path, 'rb') as f:
+                            pdf_data = f.read()
+                        
+                        # Clean up temp file
+                        import os
+                        os.unlink(pdf_path)
+                        logger.info("Roadmap PDF generated successfully")
+                        
+                        # Offer download
+                        st.download_button(
+                            label="⬇️ Download PDF",
+                            data=pdf_data,
+                            file_name=f"roadmap_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                            mime="application/pdf",
+                            use_container_width=True
+                        )
+                        st.success("✅ PDF generated successfully!")
+                        
+                except ImportError as e:
+                    logger.error(f"Missing libraries for roadmap PDF: {e}")
+                    st.error("❌ PDF generation requires additional libraries. Install: pip install markdown2 xhtml2pdf")
+                except Exception as e:
+                    logger.error(f"Error generating roadmap PDF from UI: {str(e)}", exc_info=True)
+                    st.error(f"❌ Error generating PDF: {str(e)}")
 
 # Footer
 st.divider()
 st.markdown("""
 <div style="text-align: center; color: #7f8c8d; padding: 1rem;">
-    <p>OKIR Course Content Agent | Powered by Google Gemini</p>
+    <p>Lilaq Course Content Agent | Powered by Google Gemini</p>
 </div>
 """, unsafe_allow_html=True)

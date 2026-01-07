@@ -4,10 +4,13 @@ Generates comprehensive course content based on user specifications
 """
 
 import os
+import logging
 from typing import Dict, List, Optional
 from pydantic import BaseModel, Field
 import google.generativeai as genai
 import json
+
+logger = logging.getLogger(__name__)
 
 
 class Lesson(BaseModel):
@@ -46,7 +49,7 @@ class CourseContentAgent:
     Agent that generates comprehensive course content using AI
     """
     
-    def __init__(self, api_key: Optional[str] = None, model: str = "gemini-2.0-flash-exp"):
+    def __init__(self, api_key: Optional[str] = None, model: str = "gemini-2.5-flash"):
         """
         Initialize the course content agent
         
@@ -54,13 +57,17 @@ class CourseContentAgent:
             api_key: Google API key (defaults to environment variable)
             model: Model to use for generation
         """
+        logger.info("Initializing CourseContentAgent")
         self.api_key = api_key or os.getenv("GOOGLE_API_KEY")
-        self.model = model or os.getenv("GEMINI_MODEL", "gemini-2.0-flash-exp")
+        self.model = model or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        logger.debug(f"Using model: {self.model}")
         
         if not self.api_key:
+            logger.error("Google API key not found")
             raise ValueError("Google API key is required. Set GOOGLE_API_KEY environment variable.")
         
         genai.configure(api_key=self.api_key)
+        logger.info("Gemini API configured successfully")
         
         # Configure generation settings for better token management
         generation_config = {
@@ -90,11 +97,30 @@ class CourseContentAgent:
         Returns:
             Course outline dictionary
         """
-        prompt = f"""Course outline for "{topic}" ({difficulty}, {target_audience}, {duration_weeks}w).
+        prompt = f"""You are a course design expert. Create a comprehensive course outline STRICTLY about "{topic}".
 
-JSON:
-{{"title":"...","description":"1-2 sentences","prerequisites":["3 items"],"learning_outcomes":["5 items"],"modules":[{{"title":"...","description":"1 sentence"}}]}}  
-{max(4, duration_weeks)} modules. JSON only."""
+IMPORTANT: The course MUST be about "{topic}" - do NOT generate content about any other subject.
+
+Course Specifications:
+- Topic: {topic}
+- Difficulty: {difficulty}
+- Target Audience: {target_audience}
+- Duration: {duration_weeks} weeks
+- Number of Modules: {max(4, duration_weeks)}
+
+Generate a JSON object with this exact structure:
+{{
+    "title": "[Course title must include '{topic}']",
+    "description": "[1-2 sentence description specifically about {topic}]",
+    "prerequisites": ["prerequisite 1 for {topic}", "prerequisite 2", "prerequisite 3"],
+    "learning_outcomes": ["outcome 1 related to {topic}", "outcome 2", "outcome 3", "outcome 4", "outcome 5"],
+    "modules": [
+        {{"title": "Module 1 title about {topic}", "description": "Module description"}},
+        {{"title": "Module 2 title about {topic}", "description": "Module description"}}
+    ]
+}}
+
+Return ONLY valid JSON without markdown formatting. The entire course must focus on {topic}."""
 
         response = self.client.generate_content(prompt)
         content = response.text.strip()
@@ -115,12 +141,35 @@ JSON:
     def _generate_lessons_batch(self, module_title: str, course_context: str, 
                                  num_lessons: int, batch_num: int = 1) -> List[Dict]:
         """Generate a batch of lessons (max 2 per call)"""
-        prompt = f"""Module: "{module_title}". {course_context}
+        prompt = f"""You are creating lesson content for a module titled "{module_title}".
 
-Create {num_lessons} lessons as JSON array:
-[{{"title":"...","duration_minutes":45,"learning_objectives":["3 items"],"content":"200-300 word explanation","key_points":["4 items"],"activities":["2 items"],"assessment_questions":[{{"question":"...","answer":"..."}}]}}]
+{course_context}
 
-JSON only."""
+IMPORTANT: All lessons MUST be relevant to the module "{module_title}" and the overall course context. Do NOT create content about unrelated topics.
+
+Create {num_lessons} detailed lesson(s) as a JSON array. Each lesson must:
+- Be directly related to "{module_title}"
+- Have a clear title, 45-minute duration
+- Include 3 specific learning objectives
+- Provide 200-300 words of educational content
+- List 4 key takeaway points
+- Suggest 2 practical activities
+- Include 1 assessment question with answer
+
+Example structure:
+[
+  {{
+    "title": "Specific lesson title related to {module_title}",
+    "duration_minutes": 45,
+    "learning_objectives": ["Learn objective 1 about {module_title}", "Learn objective 2", "Learn objective 3"],
+    "content": "Detailed 200-300 word educational explanation about the topic...",
+    "key_points": ["Key point 1", "Key point 2", "Key point 3", "Key point 4"],
+    "activities": ["Practical activity 1", "Practical activity 2"],
+    "assessment_questions": [{{"question": "Assessment question about the lesson", "answer": "Correct answer"}}]
+  }}
+]
+
+Return ONLY valid JSON array without markdown formatting."""
 
         try:
             response = self.client.generate_content(prompt)
@@ -215,8 +264,39 @@ JSON only."""
         Returns:
             Complete CourseContent object
         """
+        logger.info(f"Starting course generation for topic: {topic}")
+        logger.debug(f"Parameters: duration_weeks={duration_weeks}, difficulty={difficulty}, target_audience={target_audience}, lessons_per_module={lessons_per_module}")
         print(f"Generating course outline for: {topic}")
         outline = self.generate_course_outline(topic, duration_weeks, difficulty, target_audience)
+        
+        # Verify the generated outline is actually about the requested topic
+        generated_title = outline.get("title", "").lower()
+        topic_keywords = topic.lower().split()
+        topic_match = any(keyword in generated_title for keyword in topic_keywords if len(keyword) > 3)
+        
+        if not topic_match:
+            logger.warning(f"Topic mismatch detected: requested='{topic}', generated='{outline.get('title')}'")
+            print(f"WARNING: Generated course title '{outline.get('title')}' may not match requested topic '{topic}'")
+            print(f"Regenerating with stricter constraints...")
+            # Retry with more explicit prompt
+            prompt = f"""CRITICAL: Create a course outline ONLY about "{topic}". The title MUST include "{topic}".
+
+Topic: {topic}
+Difficulty: {difficulty}
+Target Audience: {target_audience}
+Duration: {duration_weeks} weeks
+
+Generate JSON with title containing "{topic}", description, prerequisites, learning_outcomes, and {max(4, duration_weeks)} modules.
+JSON only, no markdown."""
+            response = self.client.generate_content(prompt)
+            content = response.text.strip()
+            if content.startswith("```json"):
+                content = content[7:]
+            if content.startswith("```"):
+                content = content[3:]
+            if content.endswith("```"):
+                content = content[:-3]
+            outline = json.loads(content.strip())
         
         course_data = {
             "title": outline.get("title", topic),
@@ -238,11 +318,13 @@ JSON only."""
         for idx, module_info in enumerate(modules):
             module_title = module_info.get("title", f"Module {idx + 1}")
             module_desc = module_info.get("description", "")
+            logger.debug(f"Generating Module {idx + 1}/{len(modules)}: {module_title}")
             print(f"  Module {idx + 1}/{len(modules)}: {module_title}")
             
             # Generate detailed lesson content
             course_context = f"Course: {course_data['title']}. Difficulty: {difficulty}. Audience: {target_audience}"
             lessons_data = self.generate_module_content(module_title, module_desc, course_context, lessons_per_module)
+            logger.debug(f"Generated {len(lessons_data)} lessons for module: {module_title}")
             
             # Convert lessons to Lesson objects
             lessons = []
@@ -271,6 +353,8 @@ JSON only."""
             
             course_data["modules"].append(module)
         
+        logger.info(f"Course generation completed: {course_data['title']}")
+        logger.info(f"Total modules: {len(course_data['modules'])}, Total lessons: {sum(len(m.lessons) for m in course_data['modules'])}")
         return CourseContent(**course_data)
     
     def export_to_dict(self, course: CourseContent) -> Dict:
